@@ -12,7 +12,9 @@ async function deploy() {
   const user = process.env.FTP_USER;
   const password = process.env.FTP_PASS;
   const port = Number(process.env.FTP_PORT) || 21;
-  const remoteDir = process.env.FTP_REMOTE_DIR || '/public_html';
+
+  // Use the exact FTP_REMOTE_DIR specified in .env.local (default to '/' if empty)
+  const remoteDir = process.env.FTP_REMOTE_DIR || '/';
   const localDir = path.resolve(process.cwd(), 'out');
 
   console.log(`[FTP DEPLOY] 🚀 Deploying "${localDir}" to ${host}:${port} (${remoteDir})...`);
@@ -26,13 +28,13 @@ async function deploy() {
       secure: false,
     });
 
-    console.log('[FTP DEPLOY] ✅ FTP Connected. Syncing files...');
+    console.log(`[FTP DEPLOY] ✅ FTP Connected. Navigating to "${remoteDir}"...`);
     await client.ensureDir(remoteDir);
-    await client.clearWorkingDir(); // Clean remote folder before fresh deployment
+    await client.clearWorkingDir();
     await client.uploadFromDir(localDir);
 
     console.log('[FTP DEPLOY] 🎉 DEPLOYMENT COMPLETED SUCCESSFULLY!');
-    console.log(`[FTP DEPLOY] Live URL: http://${host.replace('ftp.', '')} or https://ticketfestival.tupartnerti.cl`);
+    console.log(`[FTP DEPLOY] Live URL: https://ticketfestival.tupartnerti.cl`);
   } catch (err) {
     console.error('[FTP DEPLOY] ❌ Deployment failed:', err);
     process.exit(1);
