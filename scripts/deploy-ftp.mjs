@@ -13,11 +13,9 @@ async function deploy() {
   const password = process.env.FTP_PASS;
   const port = Number(process.env.FTP_PORT) || 21;
 
-  // Use the exact FTP_REMOTE_DIR specified in .env.local (default to '/' if empty)
-  const remoteDir = process.env.FTP_REMOTE_DIR || '/';
   const localDir = path.resolve(process.cwd(), 'out');
 
-  console.log(`[FTP DEPLOY] 🚀 Deploying "${localDir}" to ${host}:${port} (${remoteDir})...`);
+  console.log(`[FTP DEPLOY] 🚀 Deploying "${localDir}" to ${host}:${port}...`);
 
   try {
     await client.access({
@@ -28,12 +26,19 @@ async function deploy() {
       secure: false,
     });
 
-    console.log(`[FTP DEPLOY] ✅ FTP Connected. Navigating to "${remoteDir}"...`);
-    await client.ensureDir(remoteDir);
-    await client.clearWorkingDir();
+    console.log('[FTP DEPLOY] ✅ FTP Connected.');
+
+    // 1. Deploy to root '/'
+    console.log('[FTP DEPLOY] Uploading build to root "/"...');
+    await client.ensureDir('/');
     await client.uploadFromDir(localDir);
 
-    console.log('[FTP DEPLOY] 🎉 DEPLOYMENT COMPLETED SUCCESSFULLY!');
+    // 2. Deploy to '/festival'
+    console.log('[FTP DEPLOY] Uploading build to "/festival"...');
+    await client.ensureDir('/festival');
+    await client.uploadFromDir(localDir);
+
+    console.log('[FTP DEPLOY] 🎉 DEPLOYMENT COMPLETED SUCCESSFULLY TO BOTH ROOT AND /festival!');
     console.log(`[FTP DEPLOY] Live URL: https://ticketfestival.tupartnerti.cl`);
   } catch (err) {
     console.error('[FTP DEPLOY] ❌ Deployment failed:', err);
