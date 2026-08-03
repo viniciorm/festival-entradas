@@ -16,7 +16,7 @@ async function deploy() {
 
   const localDir = path.resolve(process.cwd(), 'out');
 
-  console.log(`[FTP DEPLOY] 🚀 Deploying "${localDir}" to ${host}:${port} (/festival)...`);
+  console.log(`[FTP DEPLOY] 🚀 Deploying "${localDir}" to ${host}:${port}...`);
 
   try {
     await client.access({
@@ -29,48 +29,31 @@ async function deploy() {
 
     console.log('[FTP DEPLOY] ✅ FTP Connected.');
 
-    // 1. Upload static export build to '/festival'
-    console.log('[FTP DEPLOY] Syncing build files to "/festival"...');
-    await client.ensureDir('/festival');
-    await client.uploadFromDir(localDir);
-
-    // 2. Upload root redirect index.html & .htaccess to '/'
-    console.log('[FTP DEPLOY] Uploading root redirect to "/"...');
-    const redirectHtml = `<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0;url=/festival/">
-  <script>window.location.replace("/festival/");</script>
-  <title>Ticket Festival Nacional Danza del Vientre Chile 2026</title>
-</head>
-<body style="background:#1A1333;color:white;font-family:sans-serif;text-align:center;padding-top:20%;">
-  <p>Redirigiendo a Ticket Festival... <a href="/festival/" style="color:#F59E0B">Haz clic aquí</a></p>
-</body>
-</html>`;
-
-    const rootHtaccess = `Options -Indexes
+    // Ensure .htaccess in out/
+    const htaccessPath = path.join(localDir, '.htaccess');
+    const htaccessContent = `Options -Indexes
 DirectoryIndex index.html
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  RewriteRule ^$ festival/ [L,R=301]
+  RewriteBase /
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^(.*)$ index.html [L]
 </IfModule>`;
+    fs.writeFileSync(htaccessPath, htaccessContent);
 
-    const tmpIndex = path.resolve(process.cwd(), 'tmp_root_index.html');
-    const tmpHtaccess = path.resolve(process.cwd(), 'tmp_root_htaccess');
+    // 1. Upload build files to '/festival' (cPanel subdomain DocumentRoot)
+    console.log('[FTP DEPLOY] Uploading build files to "/festival"...');
+    await client.ensureDir('/festival');
+    await client.uploadFromDir(localDir);
 
-    fs.writeFileSync(tmpIndex, redirectHtml);
-    fs.writeFileSync(tmpHtaccess, rootHtaccess);
-
+    // 2. Upload build files to '/' as well
+    console.log('[FTP DEPLOY] Uploading build files to "/"...');
     await client.ensureDir('/');
-    await client.uploadFrom(tmpIndex, '/index.html');
-    await client.uploadFrom(tmpHtaccess, '/.htaccess');
+    await client.uploadFromDir(localDir);
 
-    if (fs.existsSync(tmpIndex)) fs.unlinkSync(tmpIndex);
-    if (fs.existsSync(tmpHtaccess)) fs.unlinkSync(tmpHtaccess);
-
-    console.log('[FTP DEPLOY] 🎉 DEPLOYMENT & CSS FIX COMPLETED SUCCESSFULLY!');
+    console.log('[FTP DEPLOY] 🎉 DEPLOYMENT COMPLETED SUCCESSFULLY!');
     console.log(`[FTP DEPLOY] Live URL: https://ticketfestival.tupartnerti.cl`);
   } catch (err) {
     console.error('[FTP DEPLOY] ❌ Deployment failed:', err);

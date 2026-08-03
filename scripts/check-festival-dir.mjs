@@ -4,7 +4,7 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
-async function checkFestivalDir() {
+async function checkParents() {
   const client = new ftp.Client();
   const host = process.env.FTP_HOST;
   const user = process.env.FTP_USER;
@@ -13,15 +13,21 @@ async function checkFestivalDir() {
 
   try {
     await client.access({ host, user, password, port });
-    console.log('[FTP CHECK] Listing /festival:');
-    const festList = await client.list('/festival');
-    console.log(`Found ${festList.length} items inside /festival:`);
-    festList.forEach((item) => console.log(`  - ${item.name} (${item.isDirectory ? 'DIR' : 'FILE'})`));
+    console.log('[FTP PWD]:', await client.pwd());
+    
+    try {
+      await client.cdup();
+      console.log('[FTP PWD after CDUP]:', await client.pwd());
+      const list = await client.list();
+      console.log('Listing parent:', list.map(f => f.name));
+    } catch (e) {
+      console.log('CDUP not allowed or restricted (jail chroot):', e.message);
+    }
   } catch (err) {
-    console.error('[FTP CHECK] Error:', err.message);
+    console.error('[FTP CHECK] Error:', err);
   } finally {
     client.close();
   }
 }
 
-checkFestivalDir();
+checkParents();
