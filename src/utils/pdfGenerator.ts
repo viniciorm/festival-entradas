@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import QRCode from 'qrcode';
 import { Seat, Participant } from '@/types/festival';
+import { createTicketQRPayload } from '@/utils/security';
 
 let cachedLogoBase64: string | null = null;
 
@@ -28,7 +29,7 @@ async function getLogoBase64(): Promise<string | null> {
   }
 }
 
-export async function generateTicketPDF(seat: Seat, participant?: Participant): Promise<{ pdfBlob: Blob; filename: string; dataUrl: string }> {
+export async function generateTicketPDF(seat: Seat, participant?: Participant): Promise<{ pdfBlob: Blob; filename: string; dataUrl: string; securityHash: string }> {
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
@@ -147,44 +148,36 @@ export async function generateTicketPDF(seat: Seat, participant?: Participant): 
     doc.text(partContact, 54, 62);
   }
 
-  // QR Code Generation
-  const qrContent = JSON.stringify({
-    ticketCode: seat.ticketCode || `FDVC2026-${seat.id}`,
-    seatId: seat.id,
-    row: seat.row,
-    seatNumber: seat.number,
-    filename: seat.pdfFilename,
-    participant: partName,
-    event: 'Festival Nacional Danza del Vientre Chile 2026',
-  });
+  // --- CRYPTOGRAPHIC SECURE QR CODE GENERATION ---
+  const { qrString, securityHash } = await createTicketQRPayload(seat, partName);
 
-  const qrDataUrl = await QRCode.toDataURL(qrContent, { width: 120, margin: 1, color: { dark: '#1E1B4B', light: '#FFFFFF' } });
+  const qrDataUrl = await QRCode.toDataURL(qrString, { width: 120, margin: 1, color: { dark: '#1E1B4B', light: '#FFFFFF' } });
   doc.addImage(qrDataUrl, 'PNG', 101, 22, 33, 33);
 
-  // QR Scanner Label Box
+  // QR Security Hash Badge
   doc.setFillColor('#1E1B4B');
   doc.roundedRect(101, 56, 33, 7, 1, 1, 'F');
-  doc.setTextColor('#FFFFFF');
+  doc.setTextColor('#F59E0B');
   doc.setFontSize(6);
   doc.setFont('helvetica', 'bold');
-  doc.text('ESCANEAR EN PUERTA', 117.5, 60.5, { align: 'center' });
+  doc.text(`HASH: ${securityHash}`, 117.5, 60.5, { align: 'center' });
 
-  // Ticket Code Footer Line
+  // Ticket Code & Hash Footer Line
   const filename = seat.pdfFilename || `${seat.row}${seat.paddedNumber}FDVC2026-CL.pdf`;
 
   doc.setDrawColor('#CBD5E1');
   doc.setLineWidth(0.2);
   doc.line(54, 69, 134, 69);
 
-  doc.setTextColor('#64748B');
-  doc.setFontSize(7);
-  doc.setFont('courier', 'normal');
-  doc.text(`CÓDIGO: ${seat.ticketCode || 'FDVC2026-VAL'} | ARCHIVO: ${filename}`, 54, 74);
+  doc.setTextColor('#475569');
+  doc.setFontSize(6.5);
+  doc.setFont('courier', 'bold');
+  doc.text(`ARCH: ${filename} | SEC-KEY: ${securityHash}`, 54, 74);
 
   const pdfBlob = doc.output('blob');
   const dataUrl = doc.output('datauristring');
 
-  return { pdfBlob, filename, dataUrl };
+  return { pdfBlob, filename, dataUrl, securityHash };
 }
 
 export function downloadPDFBlob(blob: Blob, filename: string) {
