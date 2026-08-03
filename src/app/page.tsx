@@ -20,10 +20,11 @@ import {
 } from '@/utils/theater';
 import { generateTicketPDF } from '@/utils/pdfGenerator';
 import { verifyTicketQRPayload } from '@/utils/security';
-import { ShieldCheck, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Users, QrCode, Settings } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<string>('tickets');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [seats, setSeats] = useState<Seat[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
@@ -266,16 +267,28 @@ export default function Home() {
 
   const selectedSeatObjects = seats.filter((s) => selectedSeatIds.includes(s.id));
 
+  const mobileNavItems = [
+    { id: 'tickets', label: 'Entradas', icon: Ticket },
+    { id: 'dashboard', label: 'Resumen', icon: HomeIcon },
+    { id: 'participants', label: 'Participantes', icon: Users },
+    { id: 'scanner', label: 'Acceso QR', icon: QrCode },
+  ];
+
   return (
-    <div className="flex bg-slate-100 min-h-screen text-slate-900 font-sans antialiased">
-      {/* Sidebar */}
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+    <div className="flex bg-slate-100 min-h-screen text-slate-900 font-sans antialiased pb-16 lg:pb-0">
+      {/* Sidebar (Responsive Desktop & Mobile Drawer) */}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isMobileOpen={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+      />
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <Header />
+        <Header onToggleMobileMenu={() => setIsMobileMenuOpen(true)} />
 
-        <main className="p-8 flex-1 overflow-y-auto">
+        <main className="p-3.5 sm:p-8 flex-1 overflow-y-auto">
           {/* Mobile Camera Scan Verification Modal Banner */}
           {urlScanResult && (
             <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
@@ -306,7 +319,7 @@ export default function Home() {
                       FILA {urlScanResult.row} — ASIENTO {urlScanResult.number}
                     </div>
                     <div className="text-xs text-slate-300 font-mono">
-                      HASH HASH: <span className="text-amber-300 font-bold">{urlScanResult.hash}</span>
+                      HASH: <span className="text-amber-300 font-bold">{urlScanResult.hash}</span>
                     </div>
                   </div>
                 )}
@@ -323,7 +336,7 @@ export default function Home() {
 
           {/* Notification Toast */}
           {toastMessage && (
-            <div className="mb-6 p-4 bg-indigo-900 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-between border border-amber-400/40 animate-bounce">
+            <div className="mb-4 sm:mb-6 p-3.5 sm:p-4 bg-indigo-900 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-between border border-amber-400/40 animate-bounce">
               <span>{toastMessage}</span>
               <button onClick={() => setToastMessage(null)} className="text-amber-400 font-extrabold ml-4">
                 ✕
@@ -338,7 +351,7 @@ export default function Home() {
           {activeTab === 'tickets' || activeTab === 'dashboard' ? (
             <div>
               {/* Map + Assignment Panel 2-Column Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
                 <div className="lg:col-span-2">
                   <SeatMap
                     seats={seats}
@@ -368,6 +381,26 @@ export default function Home() {
             <SettingsView />
           ) : null}
         </main>
+      </div>
+
+      {/* Mobile Bottom Quick Navigation Bar */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#1A1333] border-t border-purple-800/40 flex items-center justify-around py-2 px-1 shadow-2xl">
+        {mobileNavItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                isActive ? 'text-amber-400 font-black' : 'text-purple-300/70 hover:text-white'
+              }`}
+            >
+              <Icon className={`w-5 h-5 ${isActive ? 'text-amber-400 scale-110' : 'text-purple-300/70'}`} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
