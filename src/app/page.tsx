@@ -19,6 +19,8 @@ import {
   generateTicketCode,
 } from '@/utils/theater';
 import { generateTicketPDF } from '@/utils/pdfGenerator';
+import { verifyTicketQRPayload } from '@/utils/security';
+import { ShieldCheck, CheckCircle2, AlertTriangle, X } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<string>('tickets');
@@ -29,7 +31,17 @@ export default function Home() {
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Initialize data from LocalStorage or default mocks
+  // Phone Camera QR Scan Modal Result
+  const [urlScanResult, setUrlScanResult] = useState<{
+    isValid: boolean;
+    seatId?: string;
+    row?: string;
+    number?: number;
+    hash?: string;
+    message: string;
+  } | null>(null);
+
+  // Initialize data from LocalStorage or default mocks & handle ?verify= URL parameter
   useEffect(() => {
     const savedSeats = localStorage.getItem('fdvc_seats_2026');
     const savedParticipants = localStorage.getItem('fdvc_participants_2026');
@@ -55,6 +67,32 @@ export default function Home() {
     } else {
       setAssignments(INITIAL_ASSIGNMENTS);
       localStorage.setItem('fdvc_assignments_2026', JSON.stringify(INITIAL_ASSIGNMENTS));
+    }
+
+    // Check for ?verify= or ?v= in URL from mobile phone camera scan
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const verifyToken = urlParams.get('verify') || urlParams.get('v');
+
+      if (verifyToken) {
+        verifyTicketQRPayload(verifyToken).then((res) => {
+          if (res.isValid && res.data) {
+            setUrlScanResult({
+              isValid: true,
+              seatId: res.data.seatId,
+              row: res.data.row,
+              number: res.data.seatNumber,
+              hash: res.data.hash,
+              message: `✅ ENTRADA OFICIAL Y AUTÉNTICA — Fila ${res.data.row} Asiento ${res.data.seatNumber}`,
+            });
+          } else {
+            setUrlScanResult({
+              isValid: false,
+              message: res.reason || '⚠️ ALERTA DE SEGURIDAD: Código QR no válido o alterado.',
+            });
+          }
+        });
+      }
     }
   }, []);
 
@@ -238,6 +276,51 @@ export default function Home() {
         <Header />
 
         <main className="p-8 flex-1 overflow-y-auto">
+          {/* Mobile Camera Scan Verification Modal Banner */}
+          {urlScanResult && (
+            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in">
+                <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center ${urlScanResult.isValid ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
+                  {urlScanResult.isValid ? <CheckCircle2 className="w-10 h-10" /> : <AlertTriangle className="w-10 h-10" />}
+                </div>
+
+                <div>
+                  <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest block mb-1">
+                    FESTIVAL DANZA DEL VIENTRE CHILE 2026
+                  </span>
+                  <h3 className="text-xl font-black text-slate-900">
+                    {urlScanResult.isValid ? '✅ Entrada Auténtica Verificada' : '🚨 Alerta de Seguridad'}
+                  </h3>
+                  <p className="text-sm font-semibold text-slate-600 mt-2">
+                    {urlScanResult.message}
+                  </p>
+                </div>
+
+                {urlScanResult.isValid && (
+                  <div className="bg-purple-950 text-white rounded-2xl p-4 text-left border border-amber-400/40 space-y-2">
+                    <div className="flex items-center justify-between text-xs text-amber-400 font-extrabold">
+                      <span>VERIFICACIÓN CRIPTOGRÁFICA</span>
+                      <ShieldCheck className="w-4 h-4 text-amber-400" />
+                    </div>
+                    <div className="text-lg font-black text-white">
+                      FILA {urlScanResult.row} — ASIENTO {urlScanResult.number}
+                    </div>
+                    <div className="text-xs text-slate-300 font-mono">
+                      HASH HASH: <span className="text-amber-300 font-bold">{urlScanResult.hash}</span>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setUrlScanResult(null)}
+                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3 rounded-xl cursor-pointer"
+                >
+                  Cerrar Verificación
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Notification Toast */}
           {toastMessage && (
             <div className="mb-6 p-4 bg-indigo-900 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-between border border-amber-400/40 animate-bounce">
