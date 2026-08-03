@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Send, Download, Save, Mail, User, Ticket, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { Send, Download, Save, Mail, User, Ticket, Loader2, Eye, X, FileCheck } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Seat, Participant } from '@/types/festival';
 import { generateTicketPDF, downloadPDFBlob } from '@/utils/pdfGenerator';
@@ -23,6 +23,12 @@ export default function AssignmentPanel({
   const [email, setEmail] = useState<string>(participants[0]?.email || '');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  
+  // PDF Live Preview Modal State
+  const [showPreviewModal, setShowPreviewModal] = useState<boolean>(false);
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewFilename, setPreviewFilename] = useState<string>('');
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState<boolean>(false);
 
   const selectedParticipant = participants.find((p) => p.id === selectedParticipantId);
 
@@ -33,14 +39,13 @@ export default function AssignmentPanel({
     }
   }, [selectedParticipantId, selectedParticipant]);
 
-  // Generate QR Code preview for first selected seat
   const previewSeat = selectedSeats[0] || {
-    id: 'C12',
-    row: 'C',
-    number: 12,
-    paddedNumber: '000012',
+    id: 'A1',
+    row: 'A',
+    number: 1,
+    paddedNumber: '000001',
     status: 'available',
-    pdfFilename: 'C000012FDVC2026-CL.pdf',
+    pdfFilename: 'A000001FDVC2026-CL.pdf',
   };
 
   useEffect(() => {
@@ -50,10 +55,10 @@ export default function AssignmentPanel({
           JSON.stringify({
             ticketCode: `FDVC2026-${previewSeat.id}`,
             seatId: previewSeat.id,
-            participant: selectedParticipant?.name || 'Compañía Al Zahra',
+            participant: selectedParticipant?.name || 'Academia Raks Sharqi Chile',
             event: 'Festival Nacional Danza del Vientre Chile 2026',
           }),
-          { width: 120, margin: 1 }
+          { width: 120, margin: 1, color: { dark: '#1E1B4B', light: '#FFFFFF' } }
         );
         setQrDataUrl(url);
       } catch (err) {
@@ -62,6 +67,21 @@ export default function AssignmentPanel({
     };
     generatePreviewQR();
   }, [previewSeat.id, selectedParticipant?.name]);
+
+  const handleOpenPdfPreview = async () => {
+    setIsGeneratingPreview(true);
+    try {
+      const seatToPreview = selectedSeats[0] || previewSeat;
+      const { dataUrl, filename } = await generateTicketPDF(seatToPreview, selectedParticipant);
+      setPreviewPdfUrl(dataUrl);
+      setPreviewFilename(filename);
+      setShowPreviewModal(true);
+    } catch (err) {
+      console.error('Error generating PDF preview:', err);
+    } finally {
+      setIsGeneratingPreview(false);
+    }
+  };
 
   const handleDownloadPDFs = async () => {
     if (selectedSeats.length === 0) return;
@@ -72,7 +92,7 @@ export default function AssignmentPanel({
         downloadPDFBlob(pdfBlob, filename);
       }
     } catch (err) {
-      console.error('Error al generar los PDFs:', err);
+      console.error('Error downloading PDFs:', err);
     } finally {
       setIsDownloading(false);
     }
@@ -161,12 +181,8 @@ export default function AssignmentPanel({
             disabled={selectedSeats.length === 0 || isProcessing}
             className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-300 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-md shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:cursor-not-allowed"
           >
-            {isProcessing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-            <span>Assignar y enviar por correo</span>
+            {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            <span>Asignar y enviar por correo</span>
           </button>
 
           <div className="grid grid-cols-2 gap-2">
@@ -192,24 +208,33 @@ export default function AssignmentPanel({
 
       {/* Ticket Preview Box */}
       <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 relative overflow-hidden">
-        <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block mb-2">
-          Vista previa de entrada
-        </span>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">
+            Entrada PDF Oficial
+          </span>
+          <button
+            onClick={handleOpenPdfPreview}
+            disabled={isGeneratingPreview}
+            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md border border-indigo-200/80 transition-all cursor-pointer"
+          >
+            {isGeneratingPreview ? <Loader2 className="w-3 h-3 animate-spin" /> : <Eye className="w-3 h-3" />}
+            <span>👁️ Previsualizar PDF</span>
+          </button>
+        </div>
 
-        <div className="bg-white rounded-lg p-3 border border-purple-100 shadow-xs flex items-center justify-between gap-3">
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-purple-950 rounded-xl p-3 text-white shadow-md border border-amber-400/30 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-full bg-[#1A1333] text-amber-400 flex items-center justify-center shrink-0 border border-amber-400/40">
-              <span className="text-sm">🌙</span>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/festival-dancers.jpg" alt="Logo Festival" className="w-10 h-10 rounded-full object-cover border-2 border-amber-400 shadow-sm shrink-0" />
             <div className="leading-tight">
-              <h4 className="text-[10px] font-black text-purple-950 uppercase tracking-tight">
-                FESTIVAL NACIONAL
+              <h4 className="text-[10px] font-black text-amber-400 uppercase tracking-tight">
+                FESTIVAL DANZA DEL VIENTRE
               </h4>
-              <p className="text-[9px] font-bold text-amber-600">DANZA DEL VIENTRE 2026</p>
-              <p className="text-[10px] font-extrabold text-slate-800 mt-1 truncate max-w-[120px]">
-                {selectedParticipant?.name || 'Compañía Al Zahra'}
+              <p className="text-[9px] font-bold text-indigo-200">CHILE 2026</p>
+              <p className="text-[10px] font-extrabold text-white mt-0.5 truncate max-w-[120px]">
+                {selectedParticipant?.name || 'Academia Raks Sharqi Chile'}
               </p>
-              <p className="text-[9px] text-slate-400">
+              <p className="text-[9px] text-amber-300 font-extrabold">
                 Fila {previewSeat.row} - Asiento {previewSeat.number}
               </p>
             </div>
@@ -217,20 +242,73 @@ export default function AssignmentPanel({
 
           {/* QR Code Graphic */}
           {qrDataUrl && (
-            <div className="w-14 h-14 bg-slate-100 p-1 rounded-md border border-slate-200 shrink-0">
+            <div className="w-12 h-12 bg-white p-1 rounded-md border border-amber-400 shrink-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={qrDataUrl} alt="QR Preview" className="w-full h-full object-contain" />
             </div>
           )}
         </div>
 
-        <div className="mt-2 flex items-center justify-between text-[9px] text-slate-400 font-semibold">
-          <span>Nombre de archivo PDF:</span>
-          <span className="text-indigo-600 font-mono font-bold">
+        <div className="mt-2 flex items-center justify-between text-[9px] text-slate-500 font-semibold">
+          <span>Formato nombre PDF:</span>
+          <span className="text-indigo-700 font-mono font-extrabold">
             {previewSeat.pdfFilename || `${previewSeat.row}${previewSeat.paddedNumber}FDVC2026-CL.pdf`}
           </span>
         </div>
       </div>
+
+      {/* PDF Live Preview Modal */}
+      {showPreviewModal && previewPdfUrl && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col shadow-2xl border border-slate-200">
+            {/* Modal Header */}
+            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCheck className="w-5 h-5 text-amber-400" />
+                <h3 className="font-extrabold text-sm text-white">
+                  Vista Previa de Entrada PDF ({previewFilename})
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowPreviewModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-all"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body: PDF iframe viewer */}
+            <div className="flex-1 bg-slate-100 p-4 min-h-[400px] flex items-center justify-center">
+              <iframe
+                src={previewPdfUrl}
+                title="Vista previa PDF Entrada Festival"
+                className="w-full h-[480px] rounded-xl border border-slate-300 shadow-lg"
+              />
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-semibold">
+                Nomenclatura: <strong className="font-mono text-slate-800">{previewFilename}</strong>
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowPreviewModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl transition-all"
+                >
+                  Cerrar
+                </button>
+                <button
+                  onClick={handleDownloadPDFs}
+                  className="px-4 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" /> Descargar PDF
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
