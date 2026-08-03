@@ -13,11 +13,29 @@ async function deployPureRoot() {
   const user = process.env.FTP_USER;
   const password = process.env.FTP_PASS;
   const port = Number(process.env.FTP_PORT) || 21;
-  const remoteDir = '/';
 
   const localDir = path.resolve(process.cwd(), 'out');
 
-  console.log(`[PURE ROOT DEPLOY] 🧹 Cleaning server and deploying "${localDir}" directly to root "/"...`);
+  const smtpUser = process.env.SMTP_USER || 'festivalnac.danzadelvientre@gmail.com';
+  const smtpPass = process.env.SMTP_PASS || '';
+
+  console.log(`[PURE ROOT DEPLOY] 🧹 Preparing deployment with SMTP user "${smtpUser}"...`);
+
+  // Inject SMTP credentials into out/api/send-tickets.php
+  const phpApiPath = path.join(localDir, 'api', 'send-tickets.php');
+  if (fs.existsSync(phpApiPath) && smtpPass) {
+    let phpContent = fs.readFileSync(phpApiPath, 'utf8');
+    phpContent = phpContent.replace(
+      /\$smtpUser = getenv\('SMTP_USER'\) \?: '[^']*';/,
+      `$smtpUser = '${smtpUser}';`
+    );
+    phpContent = phpContent.replace(
+      /\$smtpPass = getenv\('SMTP_PASS'\) \?: '[^']*';/,
+      `$smtpPass = '${smtpPass}';`
+    );
+    fs.writeFileSync(phpApiPath, phpContent, 'utf8');
+    console.log('[PURE ROOT DEPLOY] 🔒 Injected Gmail SMTP credentials into API handler.');
+  }
 
   try {
     await client.access({
@@ -32,12 +50,8 @@ async function deployPureRoot() {
 
     // 1. Remove old /festival subfolder completely
     try {
-      console.log('[PURE ROOT DEPLOY] Deleting old /festival subfolder from FTP...');
       await client.removeDir('/festival');
-      console.log('[PURE ROOT DEPLOY] Deleted /festival successfully.');
-    } catch (e) {
-      console.log('[PURE ROOT DEPLOY] /festival directory was already removed or not present.');
-    }
+    } catch (e) {}
 
     // 2. Prepare robust root .htaccess
     const htaccessPath = path.join(localDir, '.htaccess');
@@ -49,6 +63,7 @@ DirectoryIndex index.html
   AddType application/javascript .js
   AddType image/svg+xml .svg
   AddType font/woff2 .woff2
+  AddType application/x-httpd-php .php
 </IfModule>
 
 <IfModule mod_headers.c>
