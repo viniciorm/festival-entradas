@@ -18,9 +18,9 @@ import {
   INITIAL_ASSIGNMENTS,
   generateTicketCode,
 } from '@/utils/theater';
-import { generateTicketPDF } from '@/utils/pdfGenerator';
+import { generateTicketPDF, downloadPDFBlob } from '@/utils/pdfGenerator';
 import { verifyTicketQRPayload } from '@/utils/security';
-import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Users, QrCode, Settings } from 'lucide-react';
+import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Users, QrCode } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<string>('tickets');
@@ -161,39 +161,62 @@ export default function Home() {
         return seat;
       });
 
-      // If mode === 'send', generate base64 PDFs and call API route
+      // Generate PDFs for all selected seats
+      const selectedSeatObjects = updatedSeats.filter((s) => selectedSeatIds.includes(s.id));
+      const generatedPDFs = [];
+
+      for (const seat of selectedSeatObjects) {
+        const { pdfBlob, filename } = await generateTicketPDF(seat, participant);
+        generatedPDFs.push({ seat, pdfBlob, filename });
+      }
+
+      let emailAttempted = false;
+
       if (mode === 'send') {
-        const selectedSeatObjects = updatedSeats.filter((s) => selectedSeatIds.includes(s.id));
-        const ticketPayloads = [];
+        try {
+          const ticketPayloads = await Promise.all(
+            generatedPDFs.map(async ({ seat, pdfBlob, filename }) => {
+              const arrayBuffer = await pdfBlob.arrayBuffer();
+              const base64 = Buffer.from(arrayBuffer).toString('base64');
+              return {
+                row: seat.row,
+                number: seat.number,
+                filename: filename,
+                ticketCode: seat.ticketCode,
+                pdfBase64: `data:application/pdf;base64,${base64}`,
+              };
+            })
+          );
 
-        for (const seat of selectedSeatObjects) {
-          const { pdfBlob, filename } = await generateTicketPDF(seat, participant);
-          const arrayBuffer = await pdfBlob.arrayBuffer();
-          const base64 = Buffer.from(arrayBuffer).toString('base64');
-          ticketPayloads.push({
-            row: seat.row,
-            number: seat.number,
-            filename: filename,
-            ticketCode: seat.ticketCode,
-            pdfBase64: `data:application/pdf;base64,${base64}`,
+          // Try calling PHP email endpoint on hosting server
+          const phpRes = await fetch('/api/send-tickets.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recipientEmail: email,
+              participantName: participantName,
+              seatTickets: ticketPayloads,
+              sentBy: 'María Román',
+            }),
           });
+
+          if (phpRes.ok) {
+            emailAttempted = true;
+          }
+        } catch (e) {
+          console.warn('Backend email dispatch notice:', e);
         }
 
-        const res = await fetch('/api/send-tickets', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            recipientEmail: email,
-            participantName: participantName,
-            seatTickets: ticketPayloads,
-            sentBy: 'María Román',
-          }),
-        });
-
-        const data = await res.json();
-        if (data.success) {
-          setToastMessage(`🚀 Correos con PDF adjuntos enviados a ${email}`);
+        // Auto-download PDFs for the user as backup
+        for (const { pdfBlob, filename } of generatedPDFs) {
+          downloadPDFBlob(pdfBlob, filename);
         }
+
+        setToastMessage(
+          emailAttempted
+            ? `🚀 Entradas enviadas por correo a ${email} y descargadas localmente`
+            : `✅ Entradas asignadas a ${participantName}. PDFs descargados para enviar a ${email}`
+        );
       } else {
         setToastMessage(`💾 ${selectedSeatIds.length} butacas guardadas sin enviar`);
       }
@@ -228,7 +251,7 @@ export default function Home() {
       setToastMessage('❌ Ocurrió un error al procesar la asignación');
     } finally {
       setIsProcessing(false);
-      setTimeout(() => setToastMessage(null), 4000);
+      setTimeout(() => setToastMessage(null), 5000);
     }
   };
 
