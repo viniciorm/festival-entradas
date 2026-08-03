@@ -41,13 +41,13 @@ export default function Sidebar({
 
       {/* Sidebar Container (Desktop Fixed + Mobile Slide-over Drawer) */}
       <aside
-        className={`bg-[#1A1333] text-white flex flex-col justify-between p-5 h-full z-50 transition-all duration-300 select-none shadow-2xl ${
+        className={`bg-[#1A1333] text-white flex flex-col justify-between p-5 h-full z-50 transition-all duration-300 select-none shadow-2xl relative overflow-hidden ${
           isMobileOpen
             ? 'fixed top-0 left-0 bottom-0 w-72 max-w-[85vw]'
             : 'hidden lg:flex lg:w-64 shrink-0 min-h-screen'
         }`}
       >
-        {/* Background Subtle Gradient Overlay */}
+        {/* Background Subtle Gradient Overlay (Scoped strictly inside aside container) */}
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-purple-900/20 via-transparent to-black/40 pointer-events-none" />
 
         <div>
