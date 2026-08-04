@@ -1,0 +1,194 @@
+'use client';
+
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { jwtDecode } from 'jwt-decode';
+
+export interface User {
+  uid: string;
+  name: string;
+  email: string;
+  picture?: string;
+  provider: 'google' | 'password';
+  role: 'admin' | 'organizer';
+}
+
+interface GoogleJwtPayload {
+  sub: string;
+  name: string;
+  email: string;
+  picture?: string;
+}
+
+interface AuthContextType {
+  user: User | null;
+  isLoading: boolean;
+  loginWithGoogleToken: (credential: string) => Promise<boolean>;
+  loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  registerWithEmail: (name: string, email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  setDemoUser: () => void;
+}
+
+const DEFAULT_ADMIN: User = {
+  uid: 'admin-001',
+  name: 'María Román',
+  email: 'festivalnac.danzadelvientre@gmail.com',
+  picture: undefined,
+  provider: 'password',
+  role: 'admin',
+};
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Restore session from LocalStorage on mount
+  useEffect(() => {
+    try {
+      const savedUser = localStorage.getItem('fdvc_user_2026');
+      if (savedUser) {
+        setUser(JSON.parse(savedUser));
+      }
+    } catch (e) {
+      console.error('Error loading user session:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Save session state
+  const saveSession = (userData: User | null) => {
+    setUser(userData);
+    if (userData) {
+      localStorage.setItem('fdvc_user_2026', JSON.stringify(userData));
+    } else {
+      localStorage.removeItem('fdvc_user_2026');
+    }
+  };
+
+  // Google Login via JWT Credential
+  const loginWithGoogleToken = async (credential: string): Promise<boolean> => {
+    try {
+      const decoded = jwtDecode<GoogleJwtPayload>(credential);
+      const googleUser: User = {
+        uid: `google-${decoded.sub}`,
+        name: decoded.name || 'Usuario Google',
+        email: decoded.email,
+        picture: decoded.picture,
+        provider: 'google',
+        role: 'organizer',
+      };
+      saveSession(googleUser);
+      return true;
+    } catch (err) {
+      console.error('Error decoding Google JWT:', err);
+      return false;
+    }
+  };
+
+  // Email & Password Login
+  const loginWithEmail = async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
+    if (!email || !pass) {
+      return { success: false, error: 'Por favor ingresa tu correo y contraseña.' };
+    }
+
+    // Check saved registered users
+    const registeredUsersStr = localStorage.getItem('fdvc_registered_users_2026');
+    const registeredUsers: Array<User & { passwordHash: string }> = registeredUsersStr
+      ? JSON.parse(registeredUsersStr)
+      : [];
+
+    const foundUser = registeredUsers.find(
+      (u) => u.email.toLowerCase() === email.toLowerCase() && u.passwordHash === pass
+    );
+
+    if (foundUser) {
+      const { passwordHash, ...sessionUser } = foundUser;
+      saveSession(sessionUser);
+      return { success: true };
+    }
+
+    // Demo admin fallback check
+    if (
+      (email.toLowerCase() === 'festivalnac.danzadelvientre@gmail.com' || email.toLowerCase() === 'admin@festival.cl') &&
+      (pass === 'admin2026' || pass === '123456' || pass === 'festival2026')
+    ) {
+      saveSession(DEFAULT_ADMIN);
+      return { success: true };
+    }
+
+    return { success: false, error: 'Correo o contraseña incorrectos.' };
+  };
+
+  // Register new Email & Password user
+  const registerWithEmail = async (
+    name: string,
+    email: string,
+    pass: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!name || !email || !pass) {
+      return { success: false, error: 'Todos los campos son obligatorios.' };
+    }
+
+    if (pass.length < 6) {
+      return { success: false, error: 'La contraseña debe tener al menos 6 caracteres.' };
+    }
+
+    const registeredUsersStr = localStorage.getItem('fdvc_registered_users_2026');
+    const registeredUsers: Array<User & { passwordHash: string }> = registeredUsersStr
+      ? JSON.parse(registeredUsersStr)
+      : [];
+
+    if (registeredUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
+      return { success: false, error: 'Este correo ya se encuentra registrado.' };
+    }
+
+    const newUser: User = {
+      uid: `user-${Date.now()}`,
+      name,
+      email,
+      provider: 'password',
+      role: 'organizer',
+    };
+
+    registeredUsers.push({ ...newUser, passwordHash: pass });
+    localStorage.setItem('fdvc_registered_users_2026', JSON.stringify(registeredUsers));
+
+    saveSession(newUser);
+    return { success: true };
+  };
+
+  const logout = () => {
+    saveSession(null);
+  };
+
+  const setDemoUser = () => {
+    saveSession(DEFAULT_ADMIN);
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        loginWithGoogleToken,
+        loginWithEmail,
+        registerWithEmail,
+        logout,
+        setDemoUser,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

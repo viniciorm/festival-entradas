@@ -10,6 +10,8 @@ import RecentAssignmentsTable from '@/components/RecentAssignmentsTable';
 import ParticipantsManager from '@/components/ParticipantsManager';
 import GateScanner from '@/components/GateScanner';
 import SettingsView from '@/components/SettingsView';
+import LoginModal from '@/components/LoginModal';
+import { useAuth } from '@/context/AuthContext';
 
 import { Seat, Participant, AssignmentRecord, FestivalStats } from '@/types/festival';
 import {
@@ -23,6 +25,7 @@ import { verifyTicketQRPayload } from '@/utils/security';
 import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Users, QrCode } from 'lucide-react';
 
 export default function Home() {
+  const { user, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('tickets');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [seats, setSeats] = useState<Seat[]>([]);
@@ -143,6 +146,7 @@ export default function Home() {
     try {
       const participant = participants.find((p) => p.id === participantId);
       const participantName = participant ? participant.name : 'Participante';
+      const currentSenderName = user?.name || 'María Román';
 
       // Prepare updated seat state
       const updatedSeats = seats.map((seat) => {
@@ -196,7 +200,7 @@ export default function Home() {
               recipientEmail: email,
               participantName: participantName,
               seatTickets: ticketPayloads,
-              sentBy: 'María Román',
+              sentBy: currentSenderName,
             }),
           });
 
@@ -240,7 +244,7 @@ export default function Home() {
         participantName: participantName,
         seatIds: [...selectedSeatIds],
         sentToEmail: email,
-        sentBy: 'María Román',
+        sentBy: currentSenderName,
         status: mode === 'send' ? 'Enviado' : 'Asignado',
       };
       saveAssignmentsState([newRecord, ...assignments]);
@@ -299,6 +303,9 @@ export default function Home() {
 
   return (
     <div className="flex bg-slate-100 min-h-screen text-slate-900 font-sans antialiased pb-16 lg:pb-0">
+      {/* Login Auth Modal (Triggers when not logged in) */}
+      {!isLoading && <LoginModal isOpen={!user} />}
+
       {/* Sidebar (Responsive Desktop & Mobile Drawer) */}
       <Sidebar
         activeTab={activeTab}
@@ -316,8 +323,16 @@ export default function Home() {
           {urlScanResult && (
             <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in">
-                <div className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center ${urlScanResult.isValid ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                  {urlScanResult.isValid ? <CheckCircle2 className="w-10 h-10" /> : <AlertTriangle className="w-10 h-10" />}
+                <div
+                  className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center ${
+                    urlScanResult.isValid ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'
+                  }`}
+                >
+                  {urlScanResult.isValid ? (
+                    <CheckCircle2 className="w-10 h-10" />
+                  ) : (
+                    <AlertTriangle className="w-10 h-10" />
+                  )}
                 </div>
 
                 <div>
@@ -327,9 +342,7 @@ export default function Home() {
                   <h3 className="text-xl font-black text-slate-900">
                     {urlScanResult.isValid ? '✅ Entrada Auténtica Verificada' : '🚨 Alerta de Seguridad'}
                   </h3>
-                  <p className="text-sm font-semibold text-slate-600 mt-2">
-                    {urlScanResult.message}
-                  </p>
+                  <p className="text-sm font-semibold text-slate-600 mt-2">{urlScanResult.message}</p>
                 </div>
 
                 {urlScanResult.isValid && (
