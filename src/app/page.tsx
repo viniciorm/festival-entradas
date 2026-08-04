@@ -272,6 +272,29 @@ export default function Home() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  // Bulk add participants from Excel/Paste
+  const handleBulkAddParticipants = (
+    newList: Omit<Participant, 'id' | 'assignedSeatsCount'>[]
+  ) => {
+    const created: Participant[] = newList.map((item, idx) => ({
+      ...item,
+      id: `part-${Date.now()}-${idx}`,
+      assignedSeatsCount: 0,
+    }));
+    const updated = [...created, ...participants];
+    saveParticipantsState(updated);
+    setToastMessage(`🎉 ${created.length} participantes importados con éxito`);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  // Delete participant
+  const handleDeleteParticipant = (id: string) => {
+    const updated = participants.filter((p) => p.id !== id);
+    saveParticipantsState(updated);
+    setToastMessage(`🗑️ Participante eliminado de la lista`);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   // Check-In Gate Scanner action
   const handleCheckInSeat = (seatId: string): boolean => {
     const seat = seats.find((s) => s.id === seatId);
@@ -410,7 +433,12 @@ export default function Home() {
               <RecentAssignmentsTable assignments={assignments} />
             </div>
           ) : activeTab === 'participants' ? (
-            <ParticipantsManager participants={participants} onAddParticipant={handleAddParticipant} />
+            <ParticipantsManager
+              participants={participants}
+              onAddParticipant={handleAddParticipant}
+              onBulkAddParticipants={handleBulkAddParticipants}
+              onDeleteParticipant={handleDeleteParticipant}
+            />
           ) : activeTab === 'scanner' ? (
             <GateScanner seats={seats} onCheckInSeat={handleCheckInSeat} />
           ) : activeTab === 'settings' ? (
