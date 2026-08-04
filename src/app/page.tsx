@@ -92,38 +92,11 @@ export default function Home() {
     }
   };
 
-  // Initialize data on mount and set up real-time polling every 4 seconds
+  // Initialize data on mount and set up real-time polling every 2 seconds
   useEffect(() => {
-    // Local storage fallback initialization
-    const savedSeats = localStorage.getItem('fdvc_seats_2026');
-    const savedParticipants = localStorage.getItem('fdvc_participants_2026');
-    const savedAssignments = localStorage.getItem('fdvc_assignments_2026');
-
-    if (savedSeats) {
-      setSeats(JSON.parse(savedSeats));
-    } else {
-      const initialSeats = generateInitialSeats();
-      setSeats(initialSeats);
-      localStorage.setItem('fdvc_seats_2026', JSON.stringify(initialSeats));
-    }
-
-    if (savedParticipants) {
-      setParticipants(JSON.parse(savedParticipants));
-    } else {
-      setParticipants(INITIAL_PARTICIPANTS);
-      localStorage.setItem('fdvc_participants_2026', JSON.stringify(INITIAL_PARTICIPANTS));
-    }
-
-    if (savedAssignments) {
-      setAssignments(JSON.parse(savedAssignments));
-    } else {
-      setAssignments(INITIAL_ASSIGNMENTS);
-      localStorage.setItem('fdvc_assignments_2026', JSON.stringify(INITIAL_ASSIGNMENTS));
-    }
-
-    // Fetch initial state from server & poll every 4s
+    // Fetch central shared server state immediately
     fetchCentralData();
-    const interval = setInterval(fetchCentralData, 4000);
+    const interval = setInterval(fetchCentralData, 2000);
 
     // Check for ?verify= URL parameter
     if (typeof window !== 'undefined') {
