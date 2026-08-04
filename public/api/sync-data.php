@@ -11,111 +11,106 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 $dataFile = __DIR__ . '/data_store.json';
 
-// Function to generate standard 544 theater seats array if store is empty
+// Function to generate standard 544 theater seats array matching theater.ts (16 rows A-P x 34 seats = 544)
 function generateDefaultServerSeats() {
     $seats = [];
-    $rows = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','AA font'];
-    // Rows A to Z (26 rows x 20 seats = 520) + AA (24 seats) = 544 total seats
-    $rowsConfig = [
-        'A'=>20, 'B'=>20, 'C'=>20, 'D'=>20, 'E'=>20, 'F'=>20, 'G'=>20, 'H'=>20,
-        'I'=>20, 'J'=>20, 'K'=>20, 'L'=>20, 'M'=>20, 'N'=>20, 'O'=>20, 'P'=>20,
-        'Q'=>20, 'R'=>20, 'S'=>20, 'T'=>20, 'U'=>20, 'V'=>20, 'W'=>20, 'X'=>20,
-        'Y'=>20, 'Z'=>20, 'AA'=>24
-    ];
+    $rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
+    $globalIndex = 1;
 
-    foreach ($rowsConfig as $rowName => $count) {
-        for ($i = 1; $i <= $count; $i++) {
-            $id = $rowName . $i;
-            $status = 'available';
-            $assignedParticipantId = null;
-            $assignedParticipantName = null;
-            $ticketCode = null;
-            $pdfFilename = null;
-
-            // Default initial 20 assigned seats (Row A 1 to 20 assigned to Compañía Al Zahra)
-            if ($rowName === 'A' && $i <= 20) {
-                $status = 'assigned';
-                $assignedParticipantId = 'p1';
-                $assignedParticipantName = 'Compañía Al Zahra — 8 bailarinas (grupo)';
-                $ticketCode = sprintf('A%06dFDVC2026-CL', $i);
-                $pdfFilename = sprintf('FDVC2026-Entrada-FilaA-Asiento%d-CompañíaAlZahra.pdf', $i);
+    foreach ($rows as $rowName) {
+        for ($col = 1; $col <= 34; $col++) {
+            $block = 'center';
+            if ($col <= 8) {
+                $block = 'left';
+            } else if ($col >= 27) {
+                $block = 'right';
             }
+
+            $paddedNumber = sprintf('%06d', $globalIndex);
+            $id = $rowName . $col;
 
             $seats[] = [
                 'id' => $id,
                 'row' => $rowName,
-                'number' => $i,
-                'status' => $status,
-                'assignedParticipantId' => $assignedParticipantId,
-                'assignedParticipantName' => $assignedParticipantName,
-                'ticketCode' => $ticketCode,
-                'pdfFilename' => $pdfFilename
+                'number' => $col,
+                'paddedNumber' => $paddedNumber,
+                'block' => $block,
+                'status' => 'available',
+                'assignedParticipantId' => null,
+                'assignedParticipantName' => null,
+                'ticketCode' => null,
+                'pdfFilename' => sprintf('%s%sFDVC2026-CL.pdf', $rowName, $paddedNumber)
             ];
+
+            $globalIndex++;
         }
     }
     return $seats;
 }
 
-// Initialize data_store.json if it doesn't exist or is empty
-if (!file_exists($dataFile) || filesize($dataFile) < 10) {
-    $initialSeats = generateDefaultServerSeats();
-    $initialData = [
-        'seats' => $initialSeats,
-        'participants' => [
-            ['id' => 'p1', 'name' => 'Compañía Al Zahra — 8 bailarinas (grupo)', 'email' => 'alzahra.danza@gmail.com', 'assignedSeatsCount' => 20],
-            ['id' => 'p2', 'name' => 'Ana Francisca Pizarro Ruiz', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p3', 'name' => 'Grupo Shazaditas Teens', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p4', 'name' => 'Grupo Shazaditas Evolution', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p5', 'name' => 'Grupo Shazaditas Essence', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p6', 'name' => 'Ballet Shazaditas Styles', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p7', 'name' => 'Adriana Campos', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p8', 'name' => 'Adarah Bellydance', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p9', 'name' => 'Daisy Bustos Sánchez y Kardelens', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p10', 'name' => 'Priscilla Bellydancer', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p11', 'name' => 'Escuela de danza Oriental Fabiola Andrade', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p12', 'name' => 'Danzaypilates Mahailamay', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p13', 'name' => 'Casandra Solista', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p14', 'name' => 'Mabel Casandra Parra Albarran', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p15', 'name' => 'Arwamalshams', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p16', 'name' => 'Festival Raks El Hob', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p17', 'name' => 'Ballet Arwahalazhar', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p18', 'name' => 'Sofía martinez', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p19', 'name' => 'Habibi Danza Cajón del Maipo', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p20', 'name' => 'Escuela Willbellydancer', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p21', 'name' => 'Malaikas', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p22', 'name' => 'Zahra Al Ruh', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p23', 'name' => 'Alsabalal Farida Warda', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p24', 'name' => 'Nazarena', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p25', 'name' => 'Raquel Farias', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p26', 'name' => 'Diana Valle', 'email' => '', 'assignedSeatsCount' => 0],
-            ['id' => 'p27', 'name' => 'Anne Marie Lolas', 'email' => '', 'assignedSeatsCount' => 0],
-        ],
-        'assignments' => [
-            [
-                'id' => 'asgn-initial-1',
-                'date' => date('d/m/Y H:i'),
-                'participantId' => 'p1',
-                'participantName' => 'Compañía Al Zahra — 8 bailarinas (grupo)',
-                'seatIds' => ['A1','A2','A3','A4','A5','A6','A7','A8','A9','A10','A11','A12','A13','A14','A15','A16','A17','A18','A19','A20'],
-                'sentToEmail' => 'alzahra.danza@gmail.com',
-                'sentBy' => 'Sistema',
-                'status' => 'Asignado'
-            ]
-        ],
-        'scanLogs' => [],
+function getDefaultParticipants() {
+    return [
+        ['id' => 'part-1', 'name' => 'Ana Francisca Pizarro Ruiz', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Ana Francisca Pizarro Ruiz', 'email' => 'anafrancisca@festival.cl', 'phone' => '+56 9 0000 0001', 'assignedSeatsCount' => 0],
+        ['id' => 'part-2', 'name' => 'Grupo Shazaditas Teens', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Shazaditas Teens', 'email' => 'shazaditas.teens@festival.cl', 'phone' => '+56 9 0000 0002', 'assignedSeatsCount' => 0],
+        ['id' => 'part-3', 'name' => 'Grupo Shazaditas Evolution', 'type' => 'grupo', 'dancersCount' => 10, 'contactPerson' => 'Shazaditas Evolution', 'email' => 'shazaditas.evolution@festival.cl', 'phone' => '+56 9 0000 0003', 'assignedSeatsCount' => 0],
+        ['id' => 'part-4', 'name' => 'Grupo Shazaditas Essence', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Shazaditas Essence', 'email' => 'shazaditas.essence@festival.cl', 'phone' => '+56 9 0000 0004', 'assignedSeatsCount' => 0],
+        ['id' => 'part-5', 'name' => 'Ballet Shazaditas Styles', 'type' => 'grupo', 'dancersCount' => 12, 'contactPerson' => 'Ballet Shazaditas Styles', 'email' => 'shazaditas.styles@festival.cl', 'phone' => '+56 9 0000 0005', 'assignedSeatsCount' => 0],
+        ['id' => 'part-6', 'name' => 'Adriana Campos', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Adriana Campos', 'email' => 'adrianacampos@festival.cl', 'phone' => '+56 9 0000 0006', 'assignedSeatsCount' => 0],
+        ['id' => 'part-7', 'name' => 'Adarah Bellydance', 'type' => 'grupo', 'dancersCount' => 6, 'contactPerson' => 'Adarah Bellydance', 'email' => 'adarah@festival.cl', 'phone' => '+56 9 0000 0007', 'assignedSeatsCount' => 0],
+        ['id' => 'part-8', 'name' => 'Daisy Bustos Sánchez y Kardelens', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Daisy Bustos Sánchez', 'email' => 'daisy.kardelens@festival.cl', 'phone' => '+56 9 0000 0008', 'assignedSeatsCount' => 0],
+        ['id' => 'part-9', 'name' => 'Priscilla Bellydancer', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Priscilla Bellydancer', 'email' => 'priscilla@festival.cl', 'phone' => '+56 9 0000 0009', 'assignedSeatsCount' => 0],
+        ['id' => 'part-10', 'name' => 'Escuela de danza Oriental Fabiola Andrade', 'type' => 'escuela', 'dancersCount' => 15, 'contactPerson' => 'Fabiola Andrade', 'email' => 'fabiola.andrade@festival.cl', 'phone' => '+56 9 0000 0010', 'assignedSeatsCount' => 0],
+        ['id' => 'part-11', 'name' => 'Danzaypilates Mahailamay', 'type' => 'escuela', 'dancersCount' => 10, 'contactPerson' => 'Mahailamay', 'email' => 'mahailamay@festival.cl', 'phone' => '+56 9 0000 0011', 'assignedSeatsCount' => 0],
+        ['id' => 'part-12', 'name' => 'Casandra Solista', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Casandra', 'email' => 'casandra@festival.cl', 'phone' => '+56 9 0000 0012', 'assignedSeatsCount' => 0],
+        ['id' => 'part-13', 'name' => 'Mabel Casandra Parra Albarran', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Mabel Parra', 'email' => 'mabel.parra@festival.cl', 'phone' => '+56 9 0000 0013', 'assignedSeatsCount' => 0],
+        ['id' => 'part-14', 'name' => 'Arwamalshams', 'type' => 'grupo', 'dancersCount' => 6, 'contactPerson' => 'Arwamalshams', 'email' => 'arwamalshams@festival.cl', 'phone' => '+56 9 0000 0014', 'assignedSeatsCount' => 0],
+        ['id' => 'part-15', 'name' => 'Festival Raks El Hob', 'type' => 'escuela', 'dancersCount' => 12, 'contactPerson' => 'Raks El Hob', 'email' => 'rakselhob@festival.cl', 'phone' => '+56 9 0000 0015', 'assignedSeatsCount' => 0],
+        ['id' => 'part-16', 'name' => 'Ballet Arwahalazhar', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Ballet Arwahalazhar', 'email' => 'arwahalazhar@festival.cl', 'phone' => '+56 9 0000 0016', 'assignedSeatsCount' => 0],
+        ['id' => 'part-17', 'name' => 'Sofía martinez', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Sofía Martinez', 'email' => 'sofia.martinez@festival.cl', 'phone' => '+56 9 0000 0017', 'assignedSeatsCount' => 0],
+        ['id' => 'part-18', 'name' => 'Habibi Danza Cajón del Maipo', 'type' => 'escuela', 'dancersCount' => 10, 'contactPerson' => 'Habibi Danza', 'email' => 'habibi.cajondelmaipo@festival.cl', 'phone' => '+56 9 0000 0018', 'assignedSeatsCount' => 0],
+        ['id' => 'part-19', 'name' => 'Escuela Willbellydancer', 'type' => 'escuela', 'dancersCount' => 12, 'contactPerson' => 'Willbellydancer', 'email' => 'willbellydancer@festival.cl', 'phone' => '+56 9 0000 0019', 'assignedSeatsCount' => 0],
+        ['id' => 'part-20', 'name' => 'Malaikas', 'type' => 'grupo', 'dancersCount' => 6, 'contactPerson' => 'Malaikas', 'email' => 'malaikas@festival.cl', 'phone' => '+56 9 0000 0020', 'assignedSeatsCount' => 0],
+        ['id' => 'part-21', 'name' => 'Zahra Al Ruh', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Zahra Al Ruh', 'email' => 'zahra.alruh@festival.cl', 'phone' => '+56 9 0000 0021', 'assignedSeatsCount' => 0],
+        ['id' => 'part-22', 'name' => 'Alsabalal Farida Warda', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Alsabalal Farida Warda', 'email' => 'alsabalal@festival.cl', 'phone' => '+56 9 0000 0022', 'assignedSeatsCount' => 0],
+        ['id' => 'part-23', 'name' => 'Nazarena', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Nazarena', 'email' => 'nazarena@festival.cl', 'phone' => '+56 9 0000 0023', 'assignedSeatsCount' => 0],
+        ['id' => 'part-24', 'name' => 'Raquel Farias', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Raquel Farias', 'email' => 'raquel.farias@festival.cl', 'phone' => '+56 9 0000 0024', 'assignedSeatsCount' => 0],
+        ['id' => 'part-25', 'name' => 'Diana Valle', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Diana Valle', 'email' => 'diana.valle@festival.cl', 'phone' => '+56 9 0000 0025', 'assignedSeatsCount' => 0],
+        ['id' => 'part-26', 'name' => 'Anne Marie Lolas', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Anne Marie Lolas', 'email' => 'annemarie.lolas@festival.cl', 'phone' => '+56 9 0000 0026', 'assignedSeatsCount' => 0],
+    ];
+}
+
+// Load existing data
+$existingData = null;
+if (file_exists($dataFile)) {
+    $raw = file_get_contents($dataFile);
+    $existingData = json_decode($raw, true);
+}
+
+// Check if seats exist and match the 34-column layout (checking seat 'A34')
+$isValidLayout = false;
+if ($existingData && isset($existingData['seats']) && is_array($existingData['seats']) && count($existingData['seats']) === 544) {
+    foreach ($existingData['seats'] as $s) {
+        if ($s['id'] === 'A34') {
+            $isValidLayout = true;
+            break;
+        }
+    }
+}
+
+if (!$isValidLayout) {
+    $existingData = [
+        'seats' => generateDefaultServerSeats(),
+        'participants' => getDefaultParticipants(),
+        'assignments' => [],
+        'scanLogs' => isset($existingData['scanLogs']) && is_array($existingData['scanLogs']) ? $existingData['scanLogs'] : [],
         'lastUpdated' => date('c')
     ];
-    file_put_contents($dataFile, json_encode($initialData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    file_put_contents($dataFile, json_encode($existingData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
 }
 
 // GET: Retrieve central shared state
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    $content = file_get_contents($dataFile);
-    if ($content === false) {
-        echo json_encode(['error' => 'Unable to read data store']);
-        exit(1);
-    }
-    echo $content;
+    echo json_encode($existingData, JSON_UNESCAPED_UNICODE);
     exit(0);
 }
 
@@ -130,33 +125,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit(1);
     }
 
-    $existing = json_decode(file_get_contents($dataFile), true);
-    if (!$existing || !isset($existing['seats'])) {
-        $existing = [
-            'seats' => generateDefaultServerSeats(),
-            'participants' => [],
-            'assignments' => [],
-            'scanLogs' => []
-        ];
-    }
-
     // Smart Merge Seats: merge seat by seat by seat ID
-    if (isset($incoming['seats']) && is_array($incoming['seats'])) {
+    if (isset($incoming['seats']) && is_array($incoming['seats']) && count($incoming['seats']) >= 500) {
         $seatsMap = [];
-        foreach ($existing['seats'] as $s) {
+        foreach ($existingData['seats'] as $s) {
             $seatsMap[$s['id']] = $s;
         }
 
         foreach ($incoming['seats'] as $incSeat) {
             $sid = $incSeat['id'];
-            if (!isset($seatsMap[$sid])) {
-                $seatsMap[$sid] = $incSeat;
-            } else {
+            if (isset($seatsMap[$sid])) {
                 $currentStatus = $seatsMap[$sid]['status'];
                 $incStatus = $incSeat['status'];
 
-                // Priority hierarchy for status updates: checked_in > sent > assigned > available
-                // If incoming seat has a higher/equal priority status, update it
                 $priority = ['available' => 1, 'assigned' => 2, 'sent' => 3, 'checked_in' => 4];
                 $currentP = isset($priority[$currentStatus]) ? $priority[$currentStatus] : 1;
                 $incP = isset($priority[$incStatus]) ? $priority[$incStatus] : 1;
@@ -166,56 +147,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
-        $existing['seats'] = array_values($seatsMap);
+        $existingData['seats'] = array_values($seatsMap);
     }
 
     // Merge Participants
-    if (isset($incoming['participants']) && is_array($incoming['participants'])) {
+    if (isset($incoming['participants']) && is_array($incoming['participants']) && count($incoming['participants']) > 0) {
         $partMap = [];
-        foreach ($existing['participants'] as $p) {
+        foreach ($existingData['participants'] as $p) {
             $partMap[$p['id']] = $p;
         }
         foreach ($incoming['participants'] as $incP) {
             $partMap[$incP['id']] = $incP;
         }
-        $existing['participants'] = array_values($partMap);
+        $existingData['participants'] = array_values($partMap);
     }
 
     // Merge Assignments
     if (isset($incoming['assignments']) && is_array($incoming['assignments'])) {
         $asgnMap = [];
-        foreach ($existing['assignments'] as $a) {
+        foreach ($existingData['assignments'] as $a) {
             $asgnMap[$a['id']] = $a;
         }
         foreach ($incoming['assignments'] as $incA) {
             $asgnMap[$incA['id']] = $incA;
         }
-        $existing['assignments'] = array_values($asgnMap);
+        $existingData['assignments'] = array_values($asgnMap);
     }
 
     // Merge Scan Logs
     if (isset($incoming['scanLogs']) && is_array($incoming['scanLogs'])) {
         $logMap = [];
-        foreach ($existing['scanLogs'] as $l) {
+        foreach ($existingData['scanLogs'] as $l) {
             $logMap[$l['id']] = $l;
         }
         foreach ($incoming['scanLogs'] as $incL) {
             $logMap[$incL['id']] = $incL;
         }
-        // Sort scan logs descending by time/id
-        $existing['scanLogs'] = array_values($logMap);
+        $existingData['scanLogs'] = array_values($logMap);
     }
 
     if (isset($incoming['newScanLog']) && is_array($incoming['newScanLog'])) {
-        if (!isset($existing['scanLogs']) || !is_array($existing['scanLogs'])) {
-            $existing['scanLogs'] = [];
+        if (!isset($existingData['scanLogs']) || !is_array($existingData['scanLogs'])) {
+            $existingData['scanLogs'] = [];
         }
-        array_unshift($existing['scanLogs'], $incoming['newScanLog']);
+        array_unshift($existingData['scanLogs'], $incoming['newScanLog']);
     }
 
-    $existing['lastUpdated'] = date('c');
+    $existingData['lastUpdated'] = date('c');
 
-    $saved = file_put_contents($dataFile, json_encode($existing, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+    $saved = file_put_contents($dataFile, json_encode($existingData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
 
     if ($saved === false) {
         http_response_code(500);
@@ -226,7 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     echo json_encode([
         'success' => true,
         'message' => 'Data synchronized successfully',
-        'data' => $existing
+        'data' => $existingData
     ]);
     exit(0);
 }
