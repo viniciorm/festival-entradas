@@ -79,9 +79,12 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
             </span>
             <div className="flex justify-center">
               <GoogleLogin
-                onSuccess={(credentialResponse) => {
+                onSuccess={async (credentialResponse) => {
                   if (credentialResponse.credential) {
-                    loginWithGoogleToken(credentialResponse.credential);
+                    const res = await loginWithGoogleToken(credentialResponse.credential);
+                    if (!res.success) {
+                      setErrorMessage(res.error || 'Acceso denegado. Correo no autorizado.');
+                    }
                   }
                 }}
                 onError={() => {

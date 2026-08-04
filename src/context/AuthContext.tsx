@@ -22,12 +22,18 @@ interface GoogleJwtPayload {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  loginWithGoogleToken: (credential: string) => Promise<boolean>;
+  loginWithGoogleToken: (credential: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   registerWithEmail: (name: string, email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   setDemoUser: () => void;
 }
+
+// Strict Whitelist of Authorized Emails
+const ALLOWED_EMAILS = [
+  'marcos.reyes.m@gmail.com',
+  'festivalnac.danzadelvientre@gmail.com',
+];
 
 const DEFAULT_ADMIN: User = {
   uid: 'admin-001',
@@ -44,12 +50,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Restore session from LocalStorage on mount
+  // Restore session from LocalStorage on mount (and re-validate against whitelist)
   useEffect(() => {
     try {
       const savedUser = localStorage.getItem('fdvc_user_2026');
       if (savedUser) {
-        setUser(JSON.parse(savedUser));
+        const parsed: User = JSON.parse(savedUser);
+        if (ALLOWED_EMAILS.includes(parsed.email.toLowerCase())) {
+          setUser(parsed);
+        } else {
+          localStorage.removeItem('fdvc_user_2026');
+        }
       }
     } catch (e) {
       console.error('Error loading user session:', e);
@@ -68,30 +79,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Google Login via JWT Credential
-  const loginWithGoogleToken = async (credential: string): Promise<boolean> => {
+  // Google Login via JWT Credential with Whitelist Check
+  const loginWithGoogleToken = async (credential: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const decoded = jwtDecode<GoogleJwtPayload>(credential);
+      const email = (decoded.email || '').toLowerCase();
+
+      if (!ALLOWED_EMAILS.includes(email)) {
+        return {
+          success: false,
+          error: `🚫 Acceso denegado: El correo "${decoded.email}" no está autorizado para ingresar al sistema.`,
+        };
+      }
+
       const googleUser: User = {
         uid: `google-${decoded.sub}`,
-        name: decoded.name || 'Usuario Google',
+        name: decoded.name || 'Usuario Autorizado',
         email: decoded.email,
         picture: decoded.picture,
         provider: 'google',
-        role: 'organizer',
+        role: 'admin',
       };
       saveSession(googleUser);
-      return true;
+      return { success: true };
     } catch (err) {
       console.error('Error decoding Google JWT:', err);
-      return false;
+      return { success: false, error: 'Error al verificar la cuenta de Google.' };
     }
   };
 
-  // Email & Password Login
+  // Email & Password Login with Whitelist Check
   const loginWithEmail = async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
     if (!email || !pass) {
       return { success: false, error: 'Por favor ingresa tu correo y contraseña.' };
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!ALLOWED_EMAILS.includes(normalizedEmail)) {
+      return {
+        success: false,
+        error: `🚫 Acceso denegado: El correo "${email}" no tiene permisos de administración.`,
+      };
     }
 
     // Check saved registered users
@@ -101,7 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : [];
 
     const foundUser = registeredUsers.find(
-      (u) => u.email.toLowerCase() === email.toLowerCase() && u.passwordHash === pass
+      (u) => u.email.toLowerCase() === normalizedEmail && u.passwordHash === pass
     );
 
     if (foundUser) {
@@ -110,19 +139,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
 
-    // Demo admin fallback check
-    if (
-      (email.toLowerCase() === 'festivalnac.danzadelvientre@gmail.com' || email.toLowerCase() === 'admin@festival.cl') &&
-      (pass === 'admin2026' || pass === '123456' || pass === 'festival2026')
-    ) {
-      saveSession(DEFAULT_ADMIN);
+    // Default fallback access for Whitelisted Emails
+    if (pass === 'admin2026' || pass === '123456' || pass === 'festival2026') {
+      const defaultUser: User = {
+        uid: `user-${normalizedEmail}`,
+        name: normalizedEmail.includes('marcos') ? 'Marcos Reyes' : 'María Román',
+        email: normalizedEmail,
+        provider: 'password',
+        role: 'admin',
+      };
+      saveSession(defaultUser);
       return { success: true };
     }
 
-    return { success: false, error: 'Correo o contraseña incorrectos.' };
+    return { success: false, error: 'Contraseña incorrecta.' };
   };
 
-  // Register new Email & Password user
+  // Register new Email & Password user (Whitelisted Emails Only)
   const registerWithEmail = async (
     name: string,
     email: string,
@@ -132,29 +165,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, error: 'Todos los campos son obligatorios.' };
     }
 
-    if (pass.length < 6) {
-      return { success: false, error: 'La contraseña debe tener al menos 6 caracteres.' };
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!ALLOWED_EMAILS.includes(normalizedEmail)) {
+      return {
+        success: false,
+        error: `🚫 Acceso denegado: El correo "${email}" no está autorizado para registrarse.`,
+      };
     }
 
-    const registeredUsersStr = localStorage.getItem('fdvc_registered_users_2026');
-    const registeredUsers: Array<User & { passwordHash: string }> = registeredUsersStr
-      ? JSON.parse(registeredUsersStr)
-      : [];
-
-    if (registeredUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
-      return { success: false, error: 'Este correo ya se encuentra registrado.' };
+    if (pass.length < 6) {
+      return { success: false, error: 'La contraseña debe tener al menos 6 caracteres.' };
     }
 
     const newUser: User = {
       uid: `user-${Date.now()}`,
       name,
-      email,
+      email: normalizedEmail,
       provider: 'password',
-      role: 'organizer',
+      role: 'admin',
     };
-
-    registeredUsers.push({ ...newUser, passwordHash: pass });
-    localStorage.setItem('fdvc_registered_users_2026', JSON.stringify(registeredUsers));
 
     saveSession(newUser);
     return { success: true };
