@@ -18,12 +18,7 @@ import {
 import { Seat } from '@/types/festival';
 import { verifyTicketQRPayload } from '@/utils/security';
 
-interface GateScannerProps {
-  seats: Seat[];
-  onCheckInSeat: (seatId: string) => boolean;
-}
-
-interface ScanLogItem {
+export interface ScanLogItem {
   id: string;
   time: string;
   seatId: string;
@@ -34,11 +29,24 @@ interface ScanLogItem {
   message: string;
 }
 
-export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) {
+interface GateScannerProps {
+  seats: Seat[];
+  onCheckInSeat: (seatId: string) => boolean;
+  scanLogs?: ScanLogItem[];
+  onAddScanLog?: (newLog: ScanLogItem) => void;
+  onClearScanLogs?: () => void;
+}
+
+export default function GateScanner({
+  seats,
+  onCheckInSeat,
+  scanLogs = [],
+  onAddScanLog,
+  onClearScanLogs,
+}: GateScannerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [scanLogs, setScanLogs] = useState<ScanLogItem[]>([]);
 
   const [scanResult, setScanResult] = useState<{
     success: boolean;
@@ -62,16 +70,14 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
       gain.connect(audioCtx.destination);
 
       if (type === 'success') {
-        // High double beep
         osc.type = 'sine';
-        osc.frequency.setValueAtTime(880, audioCtx.currentTime); // A5
-        osc.frequency.setValueAtTime(1174.66, audioCtx.currentTime + 0.1); // D6
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        osc.frequency.setValueAtTime(1174.66, audioCtx.currentTime + 0.1);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
         osc.start(audioCtx.currentTime);
         osc.stop(audioCtx.currentTime + 0.3);
       } else {
-        // Low alarm buzz
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(220, audioCtx.currentTime);
         osc.frequency.setValueAtTime(140, audioCtx.currentTime + 0.15);
@@ -120,8 +126,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
             securityHash: securityCheck.data.hash,
           });
 
-          setScanLogs((prev) => [
-            {
+          if (onAddScanLog) {
+            onAddScanLog({
               id: `log-${Date.now()}`,
               time: timeStr,
               seatId: matchedSeat.id,
@@ -130,9 +136,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
               participantName: matchedSeat.assignedParticipantName || 'Asistente',
               status: 'already_used',
               message: 'RE-INGRESO RECHAZADO',
-            },
-            ...prev,
-          ]);
+            });
+          }
           return;
         }
 
@@ -147,8 +152,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
             securityHash: securityCheck.data.hash,
           });
 
-          setScanLogs((prev) => [
-            {
+          if (onAddScanLog) {
+            onAddScanLog({
               id: `log-${Date.now()}`,
               time: timeStr,
               seatId: matchedSeat.id,
@@ -157,9 +162,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
               participantName: matchedSeat.assignedParticipantName || 'Asistente',
               status: 'valid',
               message: 'ACCESO PERMITIDO',
-            },
-            ...prev,
-          ]);
+            });
+          }
         }
         return;
       }
@@ -173,8 +177,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
           message: securityCheck.reason || '🚨 ALERTA CRÍTICA: Código QR falsificado o firma criptográfica alterada.',
         });
 
-        setScanLogs((prev) => [
-          {
+        if (onAddScanLog) {
+          onAddScanLog({
             id: `log-${Date.now()}`,
             time: timeStr,
             seatId: 'FALSA',
@@ -183,9 +187,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
             participantName: 'DESCONOCIDO',
             status: 'fake',
             message: 'QR FALSIFICADO DETECTADO',
-          },
-          ...prev,
-        ]);
+          });
+        }
         return;
       }
 
@@ -226,8 +229,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
           seat: { ...matchedSeat, status: 'checked_in' },
         });
 
-        setScanLogs((prev) => [
-          {
+        if (onAddScanLog) {
+          onAddScanLog({
             id: `log-${Date.now()}`,
             time: timeStr,
             seatId: matchedSeat.id,
@@ -236,9 +239,8 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
             participantName: matchedSeat.assignedParticipantName || 'Asistente',
             status: 'valid',
             message: 'ACCESO PERMITIDO',
-          },
-          ...prev,
-        ]);
+          });
+        }
       }
     } finally {
       setTimeout(() => {
@@ -478,14 +480,16 @@ export default function GateScanner({ seats, onCheckInSeat }: GateScannerProps) 
         <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs space-y-4">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-              <History className="w-4 h-4 text-indigo-600" /> Historial de Ingresos de la Jornada
+              <History className="w-4 h-4 text-indigo-600" /> Historial de Ingresos en Vivo ({scanLogs.length})
             </h3>
-            <button
-              onClick={() => setScanLogs([])}
-              className="text-[11px] text-slate-400 hover:text-slate-600 font-bold flex items-center gap-1"
-            >
-              <RotateCcw className="w-3 h-3" /> Limpiar Historial
-            </button>
+            {onClearScanLogs && (
+              <button
+                onClick={onClearScanLogs}
+                className="text-[11px] text-slate-400 hover:text-slate-600 font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" /> Limpiar Historial
+              </button>
+            )}
           </div>
 
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">

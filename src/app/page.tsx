@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import StatsCards from '@/components/StatsCards';
@@ -8,7 +8,7 @@ import SeatMap from '@/components/SeatMap';
 import AssignmentPanel from '@/components/AssignmentPanel';
 import RecentAssignmentsTable from '@/components/RecentAssignmentsTable';
 import ParticipantsManager from '@/components/ParticipantsManager';
-import GateScanner from '@/components/GateScanner';
+import GateScanner, { ScanLogItem } from '@/components/GateScanner';
 import SettingsView from '@/components/SettingsView';
 import LoginModal from '@/components/LoginModal';
 import { useAuth } from '@/context/AuthContext';
@@ -31,6 +31,7 @@ export default function Home() {
   const [seats, setSeats] = useState<Seat[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
+  const [scanLogs, setScanLogs] = useState<ScanLogItem[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -45,8 +46,55 @@ export default function Home() {
     message: string;
   } | null>(null);
 
-  // Initialize data from LocalStorage or default mocks & handle ?verify= URL parameter
+  // Central Server Data Fetch & Real-Time Sync
+  const fetchCentralData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sync-data.php');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.seats && Array.isArray(json.seats) && json.seats.length > 0) {
+          setSeats(json.seats);
+          localStorage.setItem('fdvc_seats_2026', JSON.stringify(json.seats));
+        }
+        if (json.participants && Array.isArray(json.participants) && json.participants.length > 0) {
+          setParticipants(json.participants);
+          localStorage.setItem('fdvc_participants_2026', JSON.stringify(json.participants));
+        }
+        if (json.assignments && Array.isArray(json.assignments)) {
+          setAssignments(json.assignments);
+          localStorage.setItem('fdvc_assignments_2026', JSON.stringify(json.assignments));
+        }
+        if (json.scanLogs && Array.isArray(json.scanLogs)) {
+          setScanLogs(json.scanLogs);
+        }
+      }
+    } catch (e) {
+      console.warn('Central server sync notice:', e);
+    }
+  }, []);
+
+  // Post Data Updates to Central Server
+  const postCentralDataUpdate = async (updatePayload: {
+    seats?: Seat[];
+    participants?: Participant[];
+    assignments?: AssignmentRecord[];
+    scanLogs?: ScanLogItem[];
+    newScanLog?: ScanLogItem;
+  }) => {
+    try {
+      await fetch('/api/sync-data.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatePayload),
+      });
+    } catch (e) {
+      console.warn('Error pushing data to central server:', e);
+    }
+  };
+
+  // Initialize data on mount and set up real-time polling every 4 seconds
   useEffect(() => {
+    // Local storage fallback initialization
     const savedSeats = localStorage.getItem('fdvc_seats_2026');
     const savedParticipants = localStorage.getItem('fdvc_participants_2026');
     const savedAssignments = localStorage.getItem('fdvc_assignments_2026');
@@ -73,7 +121,11 @@ export default function Home() {
       localStorage.setItem('fdvc_assignments_2026', JSON.stringify(INITIAL_ASSIGNMENTS));
     }
 
-    // Check for ?verify= or ?v= in URL from mobile phone camera scan
+    // Fetch initial state from server & poll every 4s
+    fetchCentralData();
+    const interval = setInterval(fetchCentralData, 4000);
+
+    // Check for ?verify= URL parameter
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       const verifyToken = urlParams.get('verify') || urlParams.get('v');
@@ -98,22 +150,27 @@ export default function Home() {
         });
       }
     }
-  }, []);
 
-  // Save to LocalStorage whenever state changes
+    return () => clearInterval(interval);
+  }, [fetchCentralData]);
+
+  // Save state helpers with instant server push
   const saveSeatsState = (newSeats: Seat[]) => {
     setSeats(newSeats);
     localStorage.setItem('fdvc_seats_2026', JSON.stringify(newSeats));
+    postCentralDataUpdate({ seats: newSeats });
   };
 
   const saveParticipantsState = (newParticipants: Participant[]) => {
     setParticipants(newParticipants);
     localStorage.setItem('fdvc_participants_2026', JSON.stringify(newParticipants));
+    postCentralDataUpdate({ participants: newParticipants });
   };
 
   const saveAssignmentsState = (newAssignments: AssignmentRecord[]) => {
     setAssignments(newAssignments);
     localStorage.setItem('fdvc_assignments_2026', JSON.stringify(newAssignments));
+    postCentralDataUpdate({ assignments: newAssignments });
   };
 
   // Calculate live stats
@@ -247,7 +304,15 @@ export default function Home() {
         sentBy: currentSenderName,
         status: mode === 'send' ? 'Enviado' : 'Asignado',
       };
-      saveAssignmentsState([newRecord, ...assignments]);
+      const updatedAssignments = [newRecord, ...assignments];
+      saveAssignmentsState(updatedAssignments);
+
+      // Push complete assignment + seat state to central server
+      postCentralDataUpdate({
+        seats: updatedSeats,
+        participants: updatedParticipants,
+        assignments: updatedAssignments,
+      });
 
       setSelectedSeatIds([]);
     } catch (err) {
@@ -313,6 +378,18 @@ export default function Home() {
 
     saveSeatsState(updated);
     return true;
+  };
+
+  // Gate Scan Log Handlers with central server sync
+  const handleAddScanLog = (newLog: ScanLogItem) => {
+    const updated = [newLog, ...scanLogs];
+    setScanLogs(updated);
+    postCentralDataUpdate({ scanLogs: updated });
+  };
+
+  const handleClearScanLogs = () => {
+    setScanLogs([]);
+    postCentralDataUpdate({ scanLogs: [] });
   };
 
   const selectedSeatObjects = seats.filter((s) => selectedSeatIds.includes(s.id));
@@ -440,7 +517,13 @@ export default function Home() {
               onDeleteParticipant={handleDeleteParticipant}
             />
           ) : activeTab === 'scanner' ? (
-            <GateScanner seats={seats} onCheckInSeat={handleCheckInSeat} />
+            <GateScanner
+              seats={seats}
+              onCheckInSeat={handleCheckInSeat}
+              scanLogs={scanLogs}
+              onAddScanLog={handleAddScanLog}
+              onClearScanLogs={handleClearScanLogs}
+            />
           ) : activeTab === 'settings' ? (
             <SettingsView />
           ) : null}
