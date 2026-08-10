@@ -398,6 +398,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pdo->commit();
 
+        // EXPLICIT REPAIR FOR ADARAH BELLYDANCE / CRISTINA FUENTES 28 SEATS
+        // A5-A8, B5-B8, C27-C30, D23-D26, E9-E14, G9-G14
+        $adarahSeatIds = [
+            "A5","A6","A7","A8",
+            "B5","B6","B7","B8",
+            "C27","C28","C29","C30",
+            "D23","D24","D25","D26",
+            "E9","E10","E11","E12","E13","E14",
+            "G9","G10","G11","G12","G13","G14"
+        ];
+        $adarahJson = json_encode($adarahSeatIds);
+
+        $pdo->beginTransaction();
+        $sqlAdarah = $isMySQL
+            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-adarah-1', '10-08-26, 1:43 p. m.', 'part-7', 'Adarah Bellydance', '{$adarahJson}', 'bellydance.adarah@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON DUPLICATE KEY UPDATE seat_ids_json='{$adarahJson}', sent_to_email='bellydance.adarah@gmail.com', status='Enviado'"
+            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-adarah-1', '10-08-26, 1:43 p. m.', 'part-7', 'Adarah Bellydance', '{$adarahJson}', 'bellydance.adarah@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$adarahJson}', sent_to_email='bellydance.adarah@gmail.com', status='Enviado'";
+
+        $pdo->exec($sqlAdarah);
+
+        $stmtFixAdarah = $pdo->prepare("
+            UPDATE seats SET
+                status = 'sent',
+                assigned_participant_id = 'part-7',
+                assigned_participant_name = 'Adarah Bellydance'
+            WHERE id = :id
+        ");
+        foreach ($adarahSeatIds as $sId) {
+            $stmtFixAdarah->execute([':id' => $sId]);
+        }
+        $pdo->commit();
+
         // AUTO-REPAIR SEATS FROM ALL ASSIGNMENTS (in chronological order)
         $stmtAsgn = $pdo->query("SELECT * FROM assignments ORDER BY id ASC");
         $assignmentsRows = $stmtAsgn ? $stmtAsgn->fetchAll() : [];

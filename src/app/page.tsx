@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from '@/components/Sidebar';
 import Header from '@/components/Header';
 import StatsCards from '@/components/StatsCards';
@@ -34,6 +34,7 @@ export default function Home() {
   const [scanLogs, setScanLogs] = useState<ScanLogItem[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const isProcessingRef = useRef<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Phone Camera QR Scan Modal Result
@@ -48,7 +49,7 @@ export default function Home() {
 
   // Central Server Data Fetch & Real-Time Sync
   const fetchCentralData = useCallback(async () => {
-    if (isProcessing) return;
+    if (isProcessingRef.current) return;
     try {
       const res = await fetch('/api/sync-data.php');
       if (res.ok) {
@@ -72,7 +73,7 @@ export default function Home() {
     } catch (e) {
       console.warn('Central server sync notice:', e);
     }
-  }, [isProcessing]);
+  }, []);
 
   // Post Data Updates to Central Server (Atomic Batch Update)
   const postCentralDataUpdate = async (updatePayload: {
@@ -172,6 +173,7 @@ export default function Home() {
   const handleAssignAndSend = async (participantId: string, email: string, mode: 'send' | 'save') => {
     if (selectedSeatIds.length === 0) return;
     setIsProcessing(true);
+    isProcessingRef.current = true;
 
     try {
       const participant = participants.find((p) => p.id === participantId);
@@ -195,8 +197,43 @@ export default function Home() {
         return seat;
       });
 
-      // Generate PDFs for all selected seats
-      const selectedSeatObjects = updatedSeats.filter((s) => selectedSeatIds.includes(s.id));
+      const updatedParticipants = participants.map((p) => {
+        if (p.id === participantId) {
+          return { ...p, assignedSeatsCount: p.assignedSeatsCount + selectedSeatIds.length };
+        }
+        return p;
+      });
+
+      // Create Assignment record
+      const newRecord: AssignmentRecord = {
+        id: `asgn-${Date.now()}`,
+        date: new Date().toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' }),
+        participantId: participantId,
+        participantName: participantName,
+        seatIds: [...selectedSeatIds],
+        sentToEmail: email,
+        sentBy: currentSenderName,
+        status: mode === 'send' ? 'Enviado' : 'Asignado',
+      };
+      const updatedAssignments = [newRecord, ...assignments];
+
+      // 1. UPDATE LOCAL STATE AND POST TO CENTRAL DATABASE IMMEDIATELY (<50ms)
+      saveSeatsState(updatedSeats, true);
+      saveParticipantsState(updatedParticipants, true);
+      saveAssignmentsState(updatedAssignments, true);
+
+      await postCentralDataUpdate({
+        seats: updatedSeats,
+        participants: updatedParticipants,
+        assignments: updatedAssignments,
+      });
+
+      // Clear selection right away so UI feels responsive
+      const currentSelectedSeatIds = [...selectedSeatIds];
+      setSelectedSeatIds([]);
+
+      // 2. Generate PDFs for all selected seats
+      const selectedSeatObjects = updatedSeats.filter((s) => currentSelectedSeatIds.includes(s.id));
       const generatedPDFs: Array<{ seat: Seat; pdfBlob: Blob; filename: string }> = [];
 
       for (const seat of selectedSeatObjects) {
@@ -264,47 +301,11 @@ export default function Home() {
 
         setToastMessage(
           emailAttempted
-            ? `🚀 ${selectedSeatIds.length} entradas enviadas a ${email} ${totalEmailBatches > 1 ? `en ${totalEmailBatches} correos` : ''} y PDFs descargados localmente`
+            ? `🚀 ${currentSelectedSeatIds.length} entradas enviadas a ${email} ${totalEmailBatches > 1 ? `en ${totalEmailBatches} correos` : ''} y PDFs descargados localmente`
             : `✅ Entradas asignadas a ${participantName}. PDFs descargados para enviar a ${email}`
         );
-      } else {
-        setToastMessage(`💾 ${selectedSeatIds.length} butacas guardadas sin enviar`);
-      }
 
-      // Update local state
-      saveSeatsState(updatedSeats, true);
-
-      const updatedParticipants = participants.map((p) => {
-        if (p.id === participantId) {
-          return { ...p, assignedSeatsCount: p.assignedSeatsCount + selectedSeatIds.length };
-        }
-        return p;
-      });
-      saveParticipantsState(updatedParticipants, true);
-
-      // Create Assignment record
-      const newRecord: AssignmentRecord = {
-        id: `asgn-${Date.now()}`,
-        date: new Date().toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' }),
-        participantId: participantId,
-        participantName: participantName,
-        seatIds: [...selectedSeatIds],
-        sentToEmail: email,
-        sentBy: currentSenderName,
-        status: mode === 'send' ? 'Enviado' : 'Asignado',
-      };
-      const updatedAssignments = [newRecord, ...assignments];
-      saveAssignmentsState(updatedAssignments, true);
-
-      // Single atomic POST push to central server FIRST
-      await postCentralDataUpdate({
-        seats: updatedSeats,
-        participants: updatedParticipants,
-        assignments: updatedAssignments,
-      });
-
-      // Trigger local PDF downloads in background without blocking state/DB sync
-      if (mode === 'send') {
+        // Trigger local PDF downloads in background without blocking
         setTimeout(() => {
           try {
             for (const { pdfBlob, filename } of generatedPDFs) {
@@ -314,14 +315,15 @@ export default function Home() {
             console.warn('PDF download notice:', err);
           }
         }, 100);
+      } else {
+        setToastMessage(`💾 ${currentSelectedSeatIds.length} butacas guardadas sin enviar`);
       }
-
-      setSelectedSeatIds([]);
     } catch (err) {
       console.error('Error durante la asignación:', err);
       setToastMessage('❌ Ocurrió un error al procesar la asignación');
     } finally {
       setIsProcessing(false);
+      isProcessingRef.current = false;
       setTimeout(() => setToastMessage(null), 5000);
     }
   };
