@@ -320,9 +320,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pdo->commit();
 
-        // AUTO-REPAIR SEATS FROM ASSIGNMENTS TABLE:
-        // Ensures any seat present in assignments table gets correctly marked as sent/assigned in seats table
-        $assignmentsRows = $pdo->query("SELECT * FROM assignments")->fetchAll();
+        // EXPLICIT AUTO-REPAIR FOR GRUPO SHAZADITAS EVOLUTION 14 SEATS
+        // User requested 14 seats: B16, B17, B18, B19, B20, B21, B22, B23, B24, B25, B26, F28, F29, F30
+        $shazadiEvolutionSeatIds = ["B16","B17","B18","B19","B20","B21","B22","B23","B24","B25","B26","F28","F29","F30"];
+        $shazadiEvolutionJson = json_encode($shazadiEvolutionSeatIds);
+
+        $pdo->beginTransaction();
+        $pdo->exec("
+            UPDATE assignments SET
+                seat_ids_json = '{$shazadiEvolutionJson}',
+                status = 'Enviado'
+            WHERE participant_id = 'part-3' OR participant_name LIKE '%Evolution%'
+        ");
+
+        $stmtFixEvo = $pdo->prepare("
+            UPDATE seats SET
+                status = 'sent',
+                assigned_participant_id = 'part-3',
+                assigned_participant_name = 'Grupo Shazaditas Evolution'
+            WHERE id = :id
+        ");
+        foreach ($shazadiEvolutionSeatIds as $sId) {
+            $stmtFixEvo->execute([':id' => $sId]);
+        }
+        $pdo->commit();
+
+        // AUTO-REPAIR SEATS FROM ALL ASSIGNMENTS (in chronological order)
+        $assignmentsRows = $pdo->query("SELECT * FROM assignments ORDER BY id ASC").fetchAll();
         if ($assignmentsRows && count($assignmentsRows) > 0) {
             $pdo->beginTransaction();
             $stmtRepairSeat = $pdo->prepare("
@@ -331,7 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                     assigned_participant_id = :assigned_participant_id,
                     assigned_participant_name = :assigned_participant_name,
                     ticket_code = COALESCE(NULLIF(ticket_code, ''), :ticket_code)
-                WHERE id = :id AND (status = 'available' OR status IS NULL)
+                WHERE id = :id
             ");
 
             foreach ($assignmentsRows as $asgn) {
@@ -355,7 +379,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
                 }
             }
 
-            // Update assigned_seats_count for all participants
+            // Recalculate assigned_seats_count for all participants
             $pdo->exec("
                 UPDATE participants p SET assigned_seats_count = (
                     SELECT COUNT(*) FROM seats s WHERE s.assigned_participant_id = p.id AND s.status != 'available'
@@ -527,10 +551,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $sqlA = $isMySQL
                 ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
                    VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
-                   ON DUPLICATE KEY UPDATE status=VALUES(status)"
+                   ON DUPLICATE KEY UPDATE seat_ids_json=VALUES(seat_ids_json), status=VALUES(status)"
                 : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
                    VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
-                   ON CONFLICT(id) DO UPDATE SET status=excluded.status";
+                   ON CONFLICT(id) DO UPDATE SET seat_ids_json=excluded.seat_ids_json, status=excluded.status";
 
             $stmtA = $pdo->prepare($sqlA);
             foreach ($incoming['assignments'] as $a) {
