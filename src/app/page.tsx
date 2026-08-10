@@ -204,10 +204,11 @@ export default function Home() {
       }
 
       let emailAttempted = false;
+      let totalEmailBatches = 1;
 
       if (mode === 'send') {
         try {
-          const ticketPayloads = await Promise.all(
+          const allTicketPayloads = await Promise.all(
             generatedPDFs.map(async ({ seat, pdfBlob, filename }) => {
               const arrayBuffer = await pdfBlob.arrayBuffer();
               const base64 = Buffer.from(arrayBuffer).toString('base64');
@@ -221,19 +222,39 @@ export default function Home() {
             })
           );
 
-          // Try calling PHP email endpoint on hosting server
-          const phpRes = await fetch('/api/send-tickets.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              recipientEmail: email,
-              participantName: participantName,
-              seatTickets: ticketPayloads,
-              sentBy: currentSenderName,
-            }),
-          });
+          // Batch ticket payloads into chunks of maximum 5 tickets per email
+          const BATCH_SIZE = 5;
+          const batches = [];
+          for (let i = 0; i < allTicketPayloads.length; i += BATCH_SIZE) {
+            batches.push(allTicketPayloads.slice(i, i + BATCH_SIZE));
+          }
+          totalEmailBatches = batches.length;
+          let successfulBatches = 0;
 
-          if (phpRes.ok) {
+          for (let idx = 0; idx < batches.length; idx++) {
+            const chunk = batches[idx];
+            const phpRes = await fetch('/api/send-tickets.php', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                recipientEmail: email,
+                participantName: participantName,
+                seatTickets: chunk,
+                sentBy: currentSenderName,
+                batchIndex: idx + 1,
+                totalBatches: batches.length,
+              }),
+            });
+
+            if (phpRes.ok) {
+              const json = await phpRes.json();
+              if (json.success) {
+                successfulBatches++;
+              }
+            }
+          }
+
+          if (successfulBatches > 0) {
             emailAttempted = true;
           }
         } catch (e) {
@@ -247,7 +268,7 @@ export default function Home() {
 
         setToastMessage(
           emailAttempted
-            ? `🚀 Entradas enviadas por correo a ${email} y descargadas localmente`
+            ? `🚀 ${selectedSeatIds.length} entradas enviadas a ${email} ${totalEmailBatches > 1 ? `en ${totalEmailBatches} correos` : ''} y PDFs descargados localmente`
             : `✅ Entradas asignadas a ${participantName}. PDFs descargados para enviar a ${email}`
         );
       } else {
