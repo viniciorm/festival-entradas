@@ -196,7 +196,7 @@ export default function Home() {
 
       // Generate PDFs for all selected seats
       const selectedSeatObjects = updatedSeats.filter((s) => selectedSeatIds.includes(s.id));
-      const generatedPDFs = [];
+      const generatedPDFs: Array<{ seat: Seat; pdfBlob: Blob; filename: string }> = [];
 
       for (const seat of selectedSeatObjects) {
         const { pdfBlob, filename } = await generateTicketPDF(seat, participant);
@@ -261,11 +261,6 @@ export default function Home() {
           console.warn('Backend email dispatch notice:', e);
         }
 
-        // Auto-download PDFs for the user as backup
-        for (const { pdfBlob, filename } of generatedPDFs) {
-          downloadPDFBlob(pdfBlob, filename);
-        }
-
         setToastMessage(
           emailAttempted
             ? `🚀 ${selectedSeatIds.length} entradas enviadas a ${email} ${totalEmailBatches > 1 ? `en ${totalEmailBatches} correos` : ''} y PDFs descargados localmente`
@@ -275,7 +270,7 @@ export default function Home() {
         setToastMessage(`💾 ${selectedSeatIds.length} butacas guardadas sin enviar`);
       }
 
-      // Update local state without separate parallel HTTP pushes
+      // Update local state
       saveSeatsState(updatedSeats, true);
 
       const updatedParticipants = participants.map((p) => {
@@ -300,12 +295,25 @@ export default function Home() {
       const updatedAssignments = [newRecord, ...assignments];
       saveAssignmentsState(updatedAssignments, true);
 
-      // Single atomic POST push to central server
+      // Single atomic POST push to central server FIRST
       await postCentralDataUpdate({
         seats: updatedSeats,
         participants: updatedParticipants,
         assignments: updatedAssignments,
       });
+
+      // Trigger local PDF downloads in background without blocking state/DB sync
+      if (mode === 'send') {
+        setTimeout(() => {
+          try {
+            for (const { pdfBlob, filename } of generatedPDFs) {
+              downloadPDFBlob(pdfBlob, filename);
+            }
+          } catch (err) {
+            console.warn('PDF download notice:', err);
+          }
+        }, 100);
+      }
 
       setSelectedSeatIds([]);
     } catch (err) {

@@ -320,8 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pdo->commit();
 
-        // EXPLICIT AUTO-REPAIR FOR GRUPO SHAZADITAS EVOLUTION 14 SEATS
-        // User requested 14 seats: B16, B17, B18, B19, B20, B21, B22, B23, B24, B25, B26, F28, F29, F30
+        // EXPLICIT REPAIR FOR GRUPO SHAZADITAS EVOLUTION 14 SEATS
         $shazadiEvolutionSeatIds = ["B16","B17","B18","B19","B20","B21","B22","B23","B24","B25","B26","F28","F29","F30"];
         $shazadiEvolutionJson = json_encode($shazadiEvolutionSeatIds);
 
@@ -345,8 +344,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pdo->commit();
 
+        // EXPLICIT REPAIR FOR GRUPO SHAZADITAS ESSENCE 9 SEATS (F5, F6, F7, F8, K9, K10, K11, K12, K13)
+        $shazadiEssenceSeatIds = ["F5","F6","F7","F8","K9","K10","K11","K12","K13"];
+        $shazadiEssenceJson = json_encode($shazadiEssenceSeatIds);
+
+        $pdo->beginTransaction();
+        $sqlEssence = $isMySQL
+            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-essence-1', '10-08-26, 1:33 p. m.', 'part-4', 'Grupo Shazaditas Essence', '{$shazadiEssenceJson}', 'profesorashazadi@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON DUPLICATE KEY UPDATE seat_ids_json='{$shazadiEssenceJson}', status='Enviado'"
+            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-essence-1', '10-08-26, 1:33 p. m.', 'part-4', 'Grupo Shazaditas Essence', '{$shazadiEssenceJson}', 'profesorashazadi@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$shazadiEssenceJson}', status='Enviado'";
+
+        $pdo->exec($sqlEssence);
+
+        $stmtFixEssence = $pdo->prepare("
+            UPDATE seats SET
+                status = 'sent',
+                assigned_participant_id = 'part-4',
+                assigned_participant_name = 'Grupo Shazaditas Essence'
+            WHERE id = :id
+        ");
+        foreach ($shazadiEssenceSeatIds as $sId) {
+            $stmtFixEssence->execute([':id' => $sId]);
+        }
+        $pdo->commit();
+
         // AUTO-REPAIR SEATS FROM ALL ASSIGNMENTS (in chronological order)
-        $assignmentsRows = $pdo->query("SELECT * FROM assignments ORDER BY id ASC").fetchAll();
+        $stmtAsgn = $pdo->query("SELECT * FROM assignments ORDER BY id ASC");
+        $assignmentsRows = $stmtAsgn ? $stmtAsgn->fetchAll() : [];
+
         if ($assignmentsRows && count($assignmentsRows) > 0) {
             $pdo->beginTransaction();
             $stmtRepairSeat = $pdo->prepare("
