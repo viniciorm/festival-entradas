@@ -78,6 +78,15 @@ function getDBConnection() {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
 
+        // Ensure missing columns exist in existing participants table
+        foreach (['school' => 'VARCHAR(255)', 'teacher' => 'VARCHAR(255)', 'instagram' => 'TEXT', 'facebook' => 'TEXT', 'tiktok' => 'TEXT'] as $col => $type) {
+            try {
+                $pdo->exec("ALTER TABLE participants ADD COLUMN $col $type");
+            } catch (Exception $e) {
+                // Column already exists
+            }
+        }
+
         return $pdo;
     }
 
@@ -141,6 +150,14 @@ function getDBConnection() {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     ");
+
+    foreach (['school', 'teacher', 'instagram', 'facebook', 'tiktok'] as $col) {
+        try {
+            $pdo->exec("ALTER TABLE participants ADD COLUMN $col TEXT");
+        } catch (Exception $e) {
+            // Column already exists
+        }
+    }
 
     return $pdo;
 }
@@ -250,35 +267,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $pdo->commit();
         }
 
-        // Always re-sync participants table with default participants if count != 26
-        $pCount = $pdo->query("SELECT COUNT(*) FROM participants");
-        if ((int)$pCount->fetchColumn() !== 26) {
-            $pdo->beginTransaction();
-            $pdo->exec("DELETE FROM participants");
-            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
-            $sqlP = "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
-                     VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)";
+        // ALWAYS UPSERT official 26 participants so existing records get updated with real emails, phones, schools, social handles
+        $pdo->beginTransaction();
+        $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+        $sqlP = $isMySQL
+            ? "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+               VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
+               ON DUPLICATE KEY UPDATE 
+                 name = VALUES(name),
+                 type = VALUES(type),
+                 dancers_count = VALUES(dancers_count),
+                 contact_person = VALUES(contact_person),
+                 email = VALUES(email),
+                 phone = VALUES(phone),
+                 school = VALUES(school),
+                 teacher = VALUES(teacher),
+                 instagram = VALUES(instagram),
+                 facebook = VALUES(facebook),
+                 tiktok = VALUES(tiktok)"
+            : "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+               VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
+               ON CONFLICT(id) DO UPDATE SET
+                 name = excluded.name,
+                 type = excluded.type,
+                 dancers_count = excluded.dancers_count,
+                 contact_person = excluded.contact_person,
+                 email = excluded.email,
+                 phone = excluded.phone,
+                 school = excluded.school,
+                 teacher = excluded.teacher,
+                 instagram = excluded.instagram,
+                 facebook = excluded.facebook,
+                 tiktok = excluded.tiktok";
 
-            $insertP = $pdo->prepare($sqlP);
-            foreach (getDefaultParticipants() as $p) {
-                $insertP->execute([
-                    ':id' => $p['id'],
-                    ':name' => $p['name'],
-                    ':type' => $p['type'],
-                    ':dancers_count' => $p['dancersCount'],
-                    ':contact_person' => $p['contactPerson'],
-                    ':email' => $p['email'],
-                    ':phone' => $p['phone'],
-                    ':school' => isset($p['school']) ? $p['school'] : '',
-                    ':teacher' => isset($p['teacher']) ? $p['teacher'] : '',
-                    ':instagram' => isset($p['instagram']) ? $p['instagram'] : '',
-                    ':facebook' => isset($p['facebook']) ? $p['facebook'] : '',
-                    ':tiktok' => isset($p['tiktok']) ? $p['tiktok'] : '',
-                    ':assigned_seats_count' => $p['assignedSeatsCount']
-                ]);
-            }
-            $pdo->commit();
+        $insertP = $pdo->prepare($sqlP);
+        foreach (getDefaultParticipants() as $p) {
+            $insertP->execute([
+                ':id' => $p['id'],
+                ':name' => $p['name'],
+                ':type' => $p['type'],
+                ':dancers_count' => $p['dancersCount'],
+                ':contact_person' => $p['contactPerson'],
+                ':email' => $p['email'],
+                ':phone' => $p['phone'],
+                ':school' => isset($p['school']) ? $p['school'] : '',
+                ':teacher' => isset($p['teacher']) ? $p['teacher'] : '',
+                ':instagram' => isset($p['instagram']) ? $p['instagram'] : '',
+                ':facebook' => isset($p['facebook']) ? $p['facebook'] : '',
+                ':tiktok' => isset($p['tiktok']) ? $p['tiktok'] : '',
+                ':assigned_seats_count' => $p['assignedSeatsCount']
+            ]);
         }
+        $pdo->commit();
 
         // Fetch seats
         $seatRows = $pdo->query("SELECT * FROM seats ORDER BY row_name ASC, seat_number ASC")->fetchAll();
@@ -413,8 +453,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
                    VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
                    ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), phone=VALUES(phone), school=VALUES(school), teacher=VALUES(teacher), instagram=VALUES(instagram), facebook=VALUES(facebook), tiktok=VALUES(tiktok), assigned_seats_count=VALUES(assigned_seats_count)"
-                : "INSERT OR REPLACE INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
-                   VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)";
+                : "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+                   VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
+                   ON CONFLICT(id) DO UPDATE SET name=excluded.name, email=excluded.email, phone=excluded.phone, school=excluded.school, teacher=excluded.teacher, instagram=excluded.instagram, facebook=excluded.facebook, tiktok=excluded.tiktok, assigned_seats_count=excluded.assigned_seats_count";
 
             $stmtP = $pdo->prepare($sqlP);
             foreach ($incoming['participants'] as $p) {
@@ -443,8 +484,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
                    VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
                    ON DUPLICATE KEY UPDATE status=VALUES(status)"
-                : "INSERT OR REPLACE INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-                   VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)";
+                : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+                   VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
+                   ON CONFLICT(id) DO UPDATE SET status=excluded.status";
 
             $stmtA = $pdo->prepare($sqlA);
             foreach ($incoming['assignments'] as $a) {
@@ -469,8 +511,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ? "INSERT INTO scan_logs (id, time_str, seat_id, row_name, seat_number, participant_name, status, message)
                    VALUES (:id, :time_str, :seat_id, :row_name, :seat_number, :participant_name, :status, :message)
                    ON DUPLICATE KEY UPDATE message=VALUES(message)"
-                : "INSERT OR REPLACE INTO scan_logs (id, time_str, seat_id, row_name, seat_number, participant_name, status, message)
-                   VALUES (:id, :time_str, :seat_id, :row_name, :seat_number, :participant_name, :status, :message)";
+                : "INSERT INTO scan_logs (id, time_str, seat_id, row_name, seat_number, participant_name, status, message)
+                   VALUES (:id, :time_str, :seat_id, :row_name, :seat_number, :participant_name, :status, :message)
+                   ON CONFLICT(id) DO UPDATE SET message=excluded.message";
 
             $stmtL = $pdo->prepare($sqlL);
             $stmtL->execute([
