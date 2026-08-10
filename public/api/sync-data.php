@@ -320,6 +320,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pdo->commit();
 
+        // AUTO-REPAIR SEATS FROM ASSIGNMENTS TABLE:
+        // Ensures any seat present in assignments table gets correctly marked as sent/assigned in seats table
+        $assignmentsRows = $pdo->query("SELECT * FROM assignments")->fetchAll();
+        if ($assignmentsRows && count($assignmentsRows) > 0) {
+            $pdo->beginTransaction();
+            $stmtRepairSeat = $pdo->prepare("
+                UPDATE seats SET
+                    status = :status,
+                    assigned_participant_id = :assigned_participant_id,
+                    assigned_participant_name = :assigned_participant_name,
+                    ticket_code = COALESCE(NULLIF(ticket_code, ''), :ticket_code)
+                WHERE id = :id AND (status = 'available' OR status IS NULL)
+            ");
+
+            foreach ($assignmentsRows as $asgn) {
+                $seatIds = json_decode($asgn['seat_ids_json'], true);
+                if (is_array($seatIds)) {
+                    $pId = $asgn['participant_id'];
+                    $pName = $asgn['participant_name'];
+                    $status = ($asgn['status'] === 'Enviado') ? 'sent' : 'assigned';
+                    foreach ($seatIds as $sId) {
+                        $rowName = preg_replace('/[0-9]/', '', $sId);
+                        $seatNum = (int)preg_replace('/[^0-9]/', '', $sId);
+                        $tCode = sprintf('FDVC2026-%s%03d-SYNC', $rowName, $seatNum);
+                        $stmtRepairSeat->execute([
+                            ':id' => $sId,
+                            ':status' => $status,
+                            ':assigned_participant_id' => $pId,
+                            ':assigned_participant_name' => $pName,
+                            ':ticket_code' => $tCode
+                        ]);
+                    }
+                }
+            }
+
+            // Update assigned_seats_count for all participants
+            $pdo->exec("
+                UPDATE participants p SET assigned_seats_count = (
+                    SELECT COUNT(*) FROM seats s WHERE s.assigned_participant_id = p.id AND s.status != 'available'
+                )
+            ");
+            $pdo->commit();
+        }
+
         // Fetch seats
         $seatRows = $pdo->query("SELECT * FROM seats ORDER BY row_name ASC, seat_number ASC")->fetchAll();
         $seats = array_map(function($r) {
@@ -527,6 +571,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':message' => $l['message']
             ]);
         }
+
+        // Recalculate assigned_seats_count for all participants
+        $pdo->exec("
+            UPDATE participants p SET assigned_seats_count = (
+                SELECT COUNT(*) FROM seats s WHERE s.assigned_participant_id = p.id AND s.status != 'available'
+            )
+        ");
 
         $pdo->commit();
 

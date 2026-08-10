@@ -31,7 +31,7 @@ export interface ScanLogItem {
 
 interface GateScannerProps {
   seats: Seat[];
-  onCheckInSeat: (seatId: string) => boolean;
+  onCheckInSeat: (seatId: string) => boolean | void | Promise<void | boolean>;
   scanLogs?: ScanLogItem[];
   onAddScanLog?: (newLog: ScanLogItem) => void;
   onClearScanLogs?: () => void;

@@ -73,7 +73,7 @@ export default function Home() {
     }
   }, []);
 
-  // Post Data Updates to Central Server
+  // Post Data Updates to Central Server (Atomic Batch Update)
   const postCentralDataUpdate = async (updatePayload: {
     seats?: Seat[];
     participants?: Participant[];
@@ -94,7 +94,6 @@ export default function Home() {
 
   // Initialize data on mount and set up real-time polling every 2 seconds
   useEffect(() => {
-    // Fetch central shared server state immediately
     fetchCentralData();
     const interval = setInterval(fetchCentralData, 2000);
 
@@ -127,23 +126,23 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [fetchCentralData]);
 
-  // Save state helpers with instant server push
-  const saveSeatsState = (newSeats: Seat[]) => {
+  // Save state helpers with optional instant server push
+  const saveSeatsState = (newSeats: Seat[], skipPush = false) => {
     setSeats(newSeats);
     localStorage.setItem('fdvc_seats_2026', JSON.stringify(newSeats));
-    postCentralDataUpdate({ seats: newSeats });
+    if (!skipPush) postCentralDataUpdate({ seats: newSeats });
   };
 
-  const saveParticipantsState = (newParticipants: Participant[]) => {
+  const saveParticipantsState = (newParticipants: Participant[], skipPush = false) => {
     setParticipants(newParticipants);
     localStorage.setItem('fdvc_participants_2026', JSON.stringify(newParticipants));
-    postCentralDataUpdate({ participants: newParticipants });
+    if (!skipPush) postCentralDataUpdate({ participants: newParticipants });
   };
 
-  const saveAssignmentsState = (newAssignments: AssignmentRecord[]) => {
+  const saveAssignmentsState = (newAssignments: AssignmentRecord[], skipPush = false) => {
     setAssignments(newAssignments);
     localStorage.setItem('fdvc_assignments_2026', JSON.stringify(newAssignments));
-    postCentralDataUpdate({ assignments: newAssignments });
+    if (!skipPush) postCentralDataUpdate({ assignments: newAssignments });
   };
 
   // Calculate live stats
@@ -255,8 +254,8 @@ export default function Home() {
         setToastMessage(`💾 ${selectedSeatIds.length} butacas guardadas sin enviar`);
       }
 
-      // Update seats & participant ticket count
-      saveSeatsState(updatedSeats);
+      // Update local state without separate parallel HTTP pushes
+      saveSeatsState(updatedSeats, true);
 
       const updatedParticipants = participants.map((p) => {
         if (p.id === participantId) {
@@ -264,7 +263,7 @@ export default function Home() {
         }
         return p;
       });
-      saveParticipantsState(updatedParticipants);
+      saveParticipantsState(updatedParticipants, true);
 
       // Create Assignment record
       const newRecord: AssignmentRecord = {
@@ -278,10 +277,10 @@ export default function Home() {
         status: mode === 'send' ? 'Enviado' : 'Asignado',
       };
       const updatedAssignments = [newRecord, ...assignments];
-      saveAssignmentsState(updatedAssignments);
+      saveAssignmentsState(updatedAssignments, true);
 
-      // Push complete assignment + seat state to central server
-      postCentralDataUpdate({
+      // Single atomic POST push to central server
+      await postCentralDataUpdate({
         seats: updatedSeats,
         participants: updatedParticipants,
         assignments: updatedAssignments,
@@ -321,206 +320,208 @@ export default function Home() {
     }));
     const updated = [...created, ...participants];
     saveParticipantsState(updated);
-    setToastMessage(`🎉 ${created.length} participantes importados con éxito`);
-    setTimeout(() => setToastMessage(null), 4000);
+    setToastMessage(`✅ ${created.length} participantes agregados masivamente`);
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
   // Delete participant
   const handleDeleteParticipant = (id: string) => {
-    const updated = participants.filter((p) => p.id !== id);
-    saveParticipantsState(updated);
-    setToastMessage(`🗑️ Participante eliminado de la lista`);
-    setTimeout(() => setToastMessage(null), 3000);
+    const p = participants.find((item) => item.id === id);
+    if (!p) return;
+    if (confirm(`¿Estás seguro de eliminar a "${p.name}"?`)) {
+      const updated = participants.filter((item) => item.id !== id);
+      saveParticipantsState(updated);
+      setToastMessage(`🗑️ Participante "${p.name}" eliminado`);
+      setTimeout(() => setToastMessage(null), 3000);
+    }
   };
 
-  // Check-In Gate Scanner action
-  const handleCheckInSeat = (seatId: string): boolean => {
-    const seat = seats.find((s) => s.id === seatId);
-    if (!seat || seat.status === 'checked_in') return false;
+  // Gate Check-in Validation & Recording
+  const handleCheckInSeat = async (seatId: string) => {
+    const targetSeat = seats.find((s) => s.id === seatId);
+    if (!targetSeat) return;
 
-    const updated = seats.map((s) => {
-      if (s.id === seatId) {
-        return {
-          ...s,
-          status: 'checked_in' as Seat['status'],
-          checkedInAt: new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }),
-        };
-      }
-      return s;
-    });
+    const timeNow = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+    let newLog: ScanLogItem;
 
-    saveSeatsState(updated);
-    return true;
+    if (targetSeat.status === 'checked_in') {
+      newLog = {
+        id: `scan-${Date.now()}`,
+        time: timeNow,
+        seatId: targetSeat.id,
+        row: targetSeat.row,
+        number: targetSeat.number,
+        participantName: targetSeat.assignedParticipantName || 'Sin Nombre',
+        status: 'already_used',
+        message: '¡ALERTA! Entrada ya fue ingresada anteriormente en puerta',
+      };
+    } else if (targetSeat.status === 'available') {
+      newLog = {
+        id: `scan-${Date.now()}`,
+        time: timeNow,
+        seatId: targetSeat.id,
+        row: targetSeat.row,
+        number: targetSeat.number,
+        participantName: 'Sin Asignar',
+        status: 'fake',
+        message: 'Butaca no asignada ni emitida en sistema',
+      };
+    } else {
+      newLog = {
+        id: `scan-${Date.now()}`,
+        time: timeNow,
+        seatId: targetSeat.id,
+        row: targetSeat.row,
+        number: targetSeat.number,
+        participantName: targetSeat.assignedParticipantName || 'Participante',
+        status: 'valid',
+        message: 'Acceso Permitido — Entrada Validada OK',
+      };
+
+      // Mark seat checked_in in state
+      const updatedSeats = seats.map((s) => (s.id === seatId ? { ...s, status: 'checked_in' as const, checkedInAt: new Date().toISOString() } : s));
+      saveSeatsState(updatedSeats, true);
+      await postCentralDataUpdate({ seats: updatedSeats, newScanLog: newLog });
+    }
+
+    const updatedLogs = [newLog, ...scanLogs];
+    setScanLogs(updatedLogs);
+    if (targetSeat.status !== 'checked_in' && targetSeat.status !== 'available') {
+      saveSeatsState(seats.map((s) => (s.id === seatId ? { ...s, status: 'checked_in' as const } : s)));
+    }
   };
 
-  // Gate Scan Log Handlers with central server sync
-  const handleAddScanLog = (newLog: ScanLogItem) => {
-    const updated = [newLog, ...scanLogs];
-    setScanLogs(updated);
-    postCentralDataUpdate({ scanLogs: updated });
-  };
+  const selectedSeats = seats.filter((s) => selectedSeatIds.includes(s.id));
 
-  const handleClearScanLogs = () => {
-    setScanLogs([]);
-    postCentralDataUpdate({ scanLogs: [] });
-  };
+  // If user authentication is still loading
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm font-semibold tracking-wide">Cargando sistema de entradas...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const selectedSeatObjects = seats.filter((s) => selectedSeatIds.includes(s.id));
-
-  const mobileNavItems = [
-    { id: 'tickets', label: 'Entradas', icon: Ticket },
-    { id: 'dashboard', label: 'Resumen', icon: HomeIcon },
-    { id: 'participants', label: 'Participantes', icon: Users },
-    { id: 'scanner', label: 'Acceso QR', icon: QrCode },
-  ];
+  // Mandatory Login Gatekeeper
+  if (!user) {
+    return <LoginModal isOpen={true} />;
+  }
 
   return (
-    <div className="flex bg-slate-100 min-h-screen text-slate-900 font-sans antialiased pb-16 lg:pb-0">
-      {/* Login Auth Modal (Triggers when not logged in) */}
-      {!isLoading && <LoginModal isOpen={!user} />}
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 animate-bounce flex items-center gap-2">
+          <span>{toastMessage}</span>
+        </div>
+      )}
 
-      {/* Sidebar (Responsive Desktop & Mobile Drawer) */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        isMobileOpen={isMobileMenuOpen}
-        onCloseMobile={() => setIsMobileMenuOpen(false)}
-      />
+      {/* Camera Scan Result Modal overlay */}
+      {urlScanResult && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 text-center">
+            {urlScanResult.isValid ? (
+              <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto animate-pulse" />
+            ) : (
+              <AlertTriangle className="w-16 h-16 text-red-500 mx-auto" />
+            )}
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <Header onToggleMobileMenu={() => setIsMobileMenuOpen(true)} />
+            <h3 className="text-xl font-extrabold text-slate-900">{urlScanResult.isValid ? 'Entrada Válida' : 'Verificación Fallida'}</h3>
+            <p className="text-xs text-slate-600 font-medium leading-relaxed">{urlScanResult.message}</p>
 
-        <main className="p-3.5 sm:p-8 flex-1 overflow-y-auto">
-          {/* Mobile Camera Scan Verification Modal Banner */}
-          {urlScanResult && (
-            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in">
-                <div
-                  className={`w-16 h-16 rounded-full mx-auto flex items-center justify-center ${
-                    urlScanResult.isValid ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'
-                  }`}
-                >
-                  {urlScanResult.isValid ? (
-                    <CheckCircle2 className="w-10 h-10" />
-                  ) : (
-                    <AlertTriangle className="w-10 h-10" />
-                  )}
-                </div>
-
-                <div>
-                  <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest block mb-1">
-                    FESTIVAL DANZA DEL VIENTRE CHILE 2026
-                  </span>
-                  <h3 className="text-xl font-black text-slate-900">
-                    {urlScanResult.isValid ? '✅ Entrada Auténtica Verificada' : '🚨 Alerta de Seguridad'}
-                  </h3>
-                  <p className="text-sm font-semibold text-slate-600 mt-2">{urlScanResult.message}</p>
-                </div>
-
-                {urlScanResult.isValid && (
-                  <div className="bg-purple-950 text-white rounded-2xl p-4 text-left border border-amber-400/40 space-y-2">
-                    <div className="flex items-center justify-between text-xs text-amber-400 font-extrabold">
-                      <span>VERIFICACIÓN CRIPTOGRÁFICA</span>
-                      <ShieldCheck className="w-4 h-4 text-amber-400" />
-                    </div>
-                    <div className="text-lg font-black text-white">
-                      FILA {urlScanResult.row} — ASIENTO {urlScanResult.number}
-                    </div>
-                    <div className="text-xs text-slate-300 font-mono">
-                      HASH: <span className="text-amber-300 font-bold">{urlScanResult.hash}</span>
-                    </div>
-                  </div>
-                )}
-
-                <button
-                  onClick={() => setUrlScanResult(null)}
-                  className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-3 rounded-xl cursor-pointer"
-                >
-                  Cerrar Verificación
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Notification Toast */}
-          {toastMessage && (
-            <div className="mb-4 sm:mb-6 p-3.5 sm:p-4 bg-indigo-900 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-between border border-amber-400/40 animate-bounce">
-              <span>{toastMessage}</span>
-              <button onClick={() => setToastMessage(null)} className="text-amber-400 font-extrabold ml-4">
-                ✕
-              </button>
-            </div>
-          )}
-
-          {/* Stats Bar */}
-          <StatsCards stats={stats} />
-
-          {/* Tab Views */}
-          {activeTab === 'tickets' || activeTab === 'dashboard' ? (
-            <div>
-              {/* Map + Assignment Panel 2-Column Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
-                <div className="lg:col-span-2">
-                  <SeatMap
-                    seats={seats}
-                    selectedSeatIds={selectedSeatIds}
-                    onToggleSeat={handleToggleSeat}
-                    onClearSelection={handleClearSelection}
-                  />
-                </div>
-                <div className="lg:col-span-1">
-                  <AssignmentPanel
-                    selectedSeats={selectedSeatObjects}
-                    participants={participants}
-                    onAssignAndSend={handleAssignAndSend}
-                    isProcessing={isProcessing}
-                  />
-                </div>
-              </div>
-
-              {/* Recent Assignments Table */}
-              <RecentAssignmentsTable assignments={assignments} />
-            </div>
-          ) : activeTab === 'participants' ? (
-            <ParticipantsManager
-              participants={participants}
-              onAddParticipant={handleAddParticipant}
-              onBulkAddParticipants={handleBulkAddParticipants}
-              onDeleteParticipant={handleDeleteParticipant}
-            />
-          ) : activeTab === 'scanner' ? (
-            <GateScanner
-              seats={seats}
-              onCheckInSeat={handleCheckInSeat}
-              scanLogs={scanLogs}
-              onAddScanLog={handleAddScanLog}
-              onClearScanLogs={handleClearScanLogs}
-            />
-          ) : activeTab === 'settings' ? (
-            <SettingsView />
-          ) : null}
-        </main>
-      </div>
-
-      {/* Mobile Bottom Quick Navigation Bar */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-[#1A1333] border-t border-purple-800/40 flex items-center justify-around py-2 px-1 shadow-2xl">
-        {mobileNavItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
-          return (
             <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
-                isActive ? 'text-amber-400 font-black' : 'text-purple-300/70 hover:text-white'
-              }`}
+              onClick={() => {
+                setUrlScanResult(null);
+                if (typeof window !== 'undefined') {
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete('verify');
+                  url.searchParams.delete('v');
+                  window.history.replaceState({}, '', url.toString());
+                }
+              }}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer"
             >
-              <Icon className={`w-5 h-5 ${isActive ? 'text-amber-400 scale-110' : 'text-purple-300/70'}`} />
-              <span>{item.label}</span>
+              Cerrar y Continuar
             </button>
-          );
-        })}
+          </div>
+        </div>
+      )}
+
+      {/* Main Layout Grid */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Navigation Sidebar */}
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isMobileOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
+        />
+
+        {/* Content Container */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+          {/* Header Bar */}
+          <Header
+            onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
+          />
+
+          {/* Body Content by Active Tab */}
+          <main className="flex-1 p-4 md:p-8 space-y-8 max-w-7xl w-full mx-auto">
+            {/* Top Dashboard Metrics */}
+            <StatsCards stats={stats} />
+
+            {/* TAB: Entradas / Dashboard Principal */}
+            {(activeTab === 'tickets' || activeTab === 'overview') && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                  <div className="lg:col-span-2">
+                    <SeatMap
+                      seats={seats}
+                      selectedSeatIds={selectedSeatIds}
+                      onToggleSeat={handleToggleSeat}
+                      onClearSelection={handleClearSelection}
+                    />
+                  </div>
+
+                  <div className="lg:col-span-1">
+                    <AssignmentPanel
+                      selectedSeats={selectedSeats}
+                      participants={participants}
+                      onAssignAndSend={handleAssignAndSend}
+                      isProcessing={isProcessing}
+                    />
+                  </div>
+                </div>
+
+                <RecentAssignmentsTable assignments={assignments} />
+              </>
+            )}
+
+            {/* TAB: Participantes / Escuelas */}
+            {activeTab === 'participants' && (
+              <ParticipantsManager
+                participants={participants}
+                onAddParticipant={handleAddParticipant}
+                onDeleteParticipant={handleDeleteParticipant}
+                onBulkAddParticipants={handleBulkAddParticipants}
+              />
+            )}
+
+            {/* TAB: Control de Acceso y QR */}
+            {activeTab === 'scanner' && (
+              <GateScanner
+                seats={seats}
+                scanLogs={scanLogs}
+                onCheckInSeat={handleCheckInSeat}
+              />
+            )}
+
+            {/* TAB: Configuración */}
+            {activeTab === 'settings' && <SettingsView />}
+          </main>
+        </div>
       </div>
     </div>
   );
