@@ -19,6 +19,11 @@ async function deployPureRoot() {
   const smtpUser = process.env.SMTP_USER || 'festivalnac.danzadelvientre@gmail.com';
   const smtpPass = process.env.SMTP_PASS || '';
 
+  const mysqlHost = process.env.MYSQL_HOST || 'localhost';
+  const mysqlDb = process.env.MYSQL_DATABASE || '';
+  const mysqlUser = process.env.MYSQL_USER || '';
+  const mysqlPass = process.env.MYSQL_PASSWORD || '';
+
   console.log(`[PURE ROOT DEPLOY] 🧹 Preparing deployment with SMTP user "${smtpUser}"...`);
 
   // Inject SMTP credentials into out/api/send-tickets.php
@@ -35,6 +40,18 @@ async function deployPureRoot() {
     );
     fs.writeFileSync(phpApiPath, phpContent, 'utf8');
     console.log('[PURE ROOT DEPLOY] 🔒 Injected Gmail SMTP credentials into API handler.');
+  }
+
+  // Inject MySQL credentials into out/api/db_config.php
+  const dbConfigPath = path.join(localDir, 'api', 'db_config.php');
+  if (fs.existsSync(dbConfigPath) && mysqlDb) {
+    let dbContent = fs.readFileSync(dbConfigPath, 'utf8');
+    dbContent = dbContent.replace(/define\('DB_HOST', '[^']*'\);/, `define('DB_HOST', '${mysqlHost}');`);
+    dbContent = dbContent.replace(/define\('DB_NAME', '[^']*'\);/, `define('DB_NAME', '${mysqlDb}');`);
+    dbContent = dbContent.replace(/define\('DB_USER', '[^']*'\);/, `define('DB_USER', '${mysqlUser}');`);
+    dbContent = dbContent.replace(/define\('DB_PASS', '[^']*'\);/, `define('DB_PASS', '${mysqlPass}');`);
+    fs.writeFileSync(dbConfigPath, dbContent, 'utf8');
+    console.log(`[PURE ROOT DEPLOY] 🔒 Injected MySQL credentials for database "${mysqlDb}" into db_config.php.`);
   }
 
   try {

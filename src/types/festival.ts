@@ -19,13 +19,18 @@ export interface Seat {
 
 export interface Participant {
   id: string;
-  name: string;
+  name: string; // Presentation / Participant name
   type: 'grupo' | 'solista';
   dancersCount: number;
-  contactPerson: string;
+  contactPerson: string; // Teacher or Contact person
   email: string;
   phone: string;
   assignedSeatsCount: number;
+  school?: string;
+  teacher?: string;
+  instagram?: string;
+  facebook?: string;
+  tiktok?: string;
 }
 
 export interface AssignmentRecord {

@@ -9,10 +9,144 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit(0);
 }
 
-$dataFile = __DIR__ . '/data_store.json';
+// Load MySQL / DB configuration
+if (file_exists(__DIR__ . '/db_config.php')) {
+    require_once __DIR__ . '/db_config.php';
+}
 
-// Function to generate standard 544 theater seats array matching theater.ts (16 rows A-P x 34 seats = 544)
-function generateDefaultServerSeats() {
+function getDBConnection() {
+    // If MySQL credentials defined in db_config.php
+    if (defined('DB_TYPE') && DB_TYPE === 'mysql' && defined('DB_NAME') && DB_NAME !== 'festiva1_entradas') {
+        $dsn = sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', DB_HOST, DB_NAME);
+        $pdo = new PDO($dsn, DB_USER, DB_PASS);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+        // Create MySQL Tables if not exist
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS seats (
+                id VARCHAR(10) PRIMARY KEY,
+                row_name VARCHAR(5),
+                seat_number INT,
+                padded_number VARCHAR(10),
+                block VARCHAR(10),
+                status VARCHAR(20),
+                assigned_participant_id VARCHAR(50),
+                assigned_participant_name VARCHAR(255),
+                ticket_code VARCHAR(100),
+                pdf_filename VARCHAR(255),
+                checked_in_at VARCHAR(50)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+            CREATE TABLE IF NOT EXISTS participants (
+                id VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(255),
+                type VARCHAR(50),
+                dancers_count INT,
+                contact_person VARCHAR(255),
+                email VARCHAR(255),
+                phone VARCHAR(50),
+                school VARCHAR(255),
+                teacher VARCHAR(255),
+                instagram TEXT,
+                facebook TEXT,
+                tiktok TEXT,
+                assigned_seats_count INT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+            CREATE TABLE IF NOT EXISTS assignments (
+                id VARCHAR(50) PRIMARY KEY,
+                date_str VARCHAR(50),
+                participant_id VARCHAR(50),
+                participant_name VARCHAR(255),
+                seat_ids_json TEXT,
+                sent_to_email VARCHAR(255),
+                sent_by VARCHAR(255),
+                status VARCHAR(50)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+            CREATE TABLE IF NOT EXISTS scan_logs (
+                id VARCHAR(50) PRIMARY KEY,
+                time_str VARCHAR(50),
+                seat_id VARCHAR(10),
+                row_name VARCHAR(5),
+                seat_number INT,
+                participant_name VARCHAR(255),
+                status VARCHAR(50),
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        ");
+
+        return $pdo;
+    }
+
+    // Fallback to SQLite if MySQL is not configured yet
+    $dbFile = __DIR__ . '/festival_database.sqlite';
+    $pdo = new PDO('sqlite:' . $dbFile);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS seats (
+            id TEXT PRIMARY KEY,
+            row_name TEXT,
+            seat_number INTEGER,
+            padded_number TEXT,
+            block TEXT,
+            status TEXT,
+            assigned_participant_id TEXT,
+            assigned_participant_name TEXT,
+            ticket_code TEXT,
+            pdf_filename TEXT,
+            checked_in_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS participants (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            type TEXT,
+            dancers_count INTEGER,
+            contact_person TEXT,
+            email TEXT,
+            phone TEXT,
+            school TEXT,
+            teacher TEXT,
+            instagram TEXT,
+            facebook TEXT,
+            tiktok TEXT,
+            assigned_seats_count INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS assignments (
+            id TEXT PRIMARY KEY,
+            date_str TEXT,
+            participant_id TEXT,
+            participant_name TEXT,
+            seat_ids_json TEXT,
+            sent_to_email TEXT,
+            sent_by TEXT,
+            status TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS scan_logs (
+            id TEXT PRIMARY KEY,
+            time_str TEXT,
+            seat_id TEXT,
+            row_name TEXT,
+            seat_number INTEGER,
+            participant_name TEXT,
+            status TEXT,
+            message TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    ");
+
+    return $pdo;
+}
+
+// Generate standard 544 theater seats
+function generateDefaultSeats() {
     $seats = [];
     $rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
     $globalIndex = 1;
@@ -39,7 +173,8 @@ function generateDefaultServerSeats() {
                 'assignedParticipantId' => null,
                 'assignedParticipantName' => null,
                 'ticketCode' => null,
-                'pdfFilename' => sprintf('%s%sFDVC2026-CL.pdf', $rowName, $paddedNumber)
+                'pdfFilename' => sprintf('%s%sFDVC2026-CL.pdf', $rowName, $paddedNumber),
+                'checkedInAt' => null
             ];
 
             $globalIndex++;
@@ -50,71 +185,187 @@ function generateDefaultServerSeats() {
 
 function getDefaultParticipants() {
     return [
-        ['id' => 'part-1', 'name' => 'Ana Francisca Pizarro Ruiz', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Ana Francisca Pizarro Ruiz', 'email' => 'anafrancisca@festival.cl', 'phone' => '+56 9 0000 0001', 'assignedSeatsCount' => 0],
-        ['id' => 'part-2', 'name' => 'Grupo Shazaditas Teens', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Shazaditas Teens', 'email' => 'shazaditas.teens@festival.cl', 'phone' => '+56 9 0000 0002', 'assignedSeatsCount' => 0],
-        ['id' => 'part-3', 'name' => 'Grupo Shazaditas Evolution', 'type' => 'grupo', 'dancersCount' => 10, 'contactPerson' => 'Shazaditas Evolution', 'email' => 'shazaditas.evolution@festival.cl', 'phone' => '+56 9 0000 0003', 'assignedSeatsCount' => 0],
-        ['id' => 'part-4', 'name' => 'Grupo Shazaditas Essence', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Shazaditas Essence', 'email' => 'shazaditas.essence@festival.cl', 'phone' => '+56 9 0000 0004', 'assignedSeatsCount' => 0],
-        ['id' => 'part-5', 'name' => 'Ballet Shazaditas Styles', 'type' => 'grupo', 'dancersCount' => 12, 'contactPerson' => 'Ballet Shazaditas Styles', 'email' => 'shazaditas.styles@festival.cl', 'phone' => '+56 9 0000 0005', 'assignedSeatsCount' => 0],
-        ['id' => 'part-6', 'name' => 'Adriana Campos', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Adriana Campos', 'email' => 'adrianacampos@festival.cl', 'phone' => '+56 9 0000 0006', 'assignedSeatsCount' => 0],
-        ['id' => 'part-7', 'name' => 'Adarah Bellydance', 'type' => 'grupo', 'dancersCount' => 6, 'contactPerson' => 'Adarah Bellydance', 'email' => 'adarah@festival.cl', 'phone' => '+56 9 0000 0007', 'assignedSeatsCount' => 0],
-        ['id' => 'part-8', 'name' => 'Daisy Bustos Sánchez y Kardelens', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Daisy Bustos Sánchez', 'email' => 'daisy.kardelens@festival.cl', 'phone' => '+56 9 0000 0008', 'assignedSeatsCount' => 0],
-        ['id' => 'part-9', 'name' => 'Priscilla Bellydancer', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Priscilla Bellydancer', 'email' => 'priscilla@festival.cl', 'phone' => '+56 9 0000 0009', 'assignedSeatsCount' => 0],
-        ['id' => 'part-10', 'name' => 'Escuela de danza Oriental Fabiola Andrade', 'type' => 'escuela', 'dancersCount' => 15, 'contactPerson' => 'Fabiola Andrade', 'email' => 'fabiola.andrade@festival.cl', 'phone' => '+56 9 0000 0010', 'assignedSeatsCount' => 0],
-        ['id' => 'part-11', 'name' => 'Danzaypilates Mahailamay', 'type' => 'escuela', 'dancersCount' => 10, 'contactPerson' => 'Mahailamay', 'email' => 'mahailamay@festival.cl', 'phone' => '+56 9 0000 0011', 'assignedSeatsCount' => 0],
-        ['id' => 'part-12', 'name' => 'Casandra Solista', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Casandra', 'email' => 'casandra@festival.cl', 'phone' => '+56 9 0000 0012', 'assignedSeatsCount' => 0],
-        ['id' => 'part-13', 'name' => 'Mabel Casandra Parra Albarran', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Mabel Parra', 'email' => 'mabel.parra@festival.cl', 'phone' => '+56 9 0000 0013', 'assignedSeatsCount' => 0],
-        ['id' => 'part-14', 'name' => 'Arwamalshams', 'type' => 'grupo', 'dancersCount' => 6, 'contactPerson' => 'Arwamalshams', 'email' => 'arwamalshams@festival.cl', 'phone' => '+56 9 0000 0014', 'assignedSeatsCount' => 0],
-        ['id' => 'part-15', 'name' => 'Festival Raks El Hob', 'type' => 'escuela', 'dancersCount' => 12, 'contactPerson' => 'Raks El Hob', 'email' => 'rakselhob@festival.cl', 'phone' => '+56 9 0000 0015', 'assignedSeatsCount' => 0],
-        ['id' => 'part-16', 'name' => 'Ballet Arwahalazhar', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Ballet Arwahalazhar', 'email' => 'arwahalazhar@festival.cl', 'phone' => '+56 9 0000 0016', 'assignedSeatsCount' => 0],
-        ['id' => 'part-17', 'name' => 'Sofía martinez', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Sofía Martinez', 'email' => 'sofia.martinez@festival.cl', 'phone' => '+56 9 0000 0017', 'assignedSeatsCount' => 0],
-        ['id' => 'part-18', 'name' => 'Habibi Danza Cajón del Maipo', 'type' => 'escuela', 'dancersCount' => 10, 'contactPerson' => 'Habibi Danza', 'email' => 'habibi.cajondelmaipo@festival.cl', 'phone' => '+56 9 0000 0018', 'assignedSeatsCount' => 0],
-        ['id' => 'part-19', 'name' => 'Escuela Willbellydancer', 'type' => 'escuela', 'dancersCount' => 12, 'contactPerson' => 'Willbellydancer', 'email' => 'willbellydancer@festival.cl', 'phone' => '+56 9 0000 0019', 'assignedSeatsCount' => 0],
-        ['id' => 'part-20', 'name' => 'Malaikas', 'type' => 'grupo', 'dancersCount' => 6, 'contactPerson' => 'Malaikas', 'email' => 'malaikas@festival.cl', 'phone' => '+56 9 0000 0020', 'assignedSeatsCount' => 0],
-        ['id' => 'part-21', 'name' => 'Zahra Al Ruh', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Zahra Al Ruh', 'email' => 'zahra.alruh@festival.cl', 'phone' => '+56 9 0000 0021', 'assignedSeatsCount' => 0],
-        ['id' => 'part-22', 'name' => 'Alsabalal Farida Warda', 'type' => 'grupo', 'dancersCount' => 8, 'contactPerson' => 'Alsabalal Farida Warda', 'email' => 'alsabalal@festival.cl', 'phone' => '+56 9 0000 0022', 'assignedSeatsCount' => 0],
-        ['id' => 'part-23', 'name' => 'Nazarena', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Nazarena', 'email' => 'nazarena@festival.cl', 'phone' => '+56 9 0000 0023', 'assignedSeatsCount' => 0],
-        ['id' => 'part-24', 'name' => 'Raquel Farias', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Raquel Farias', 'email' => 'raquel.farias@festival.cl', 'phone' => '+56 9 0000 0024', 'assignedSeatsCount' => 0],
-        ['id' => 'part-25', 'name' => 'Diana Valle', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Diana Valle', 'email' => 'diana.valle@festival.cl', 'phone' => '+56 9 0000 0025', 'assignedSeatsCount' => 0],
-        ['id' => 'part-26', 'name' => 'Anne Marie Lolas', 'type' => 'solista', 'dancersCount' => 1, 'contactPerson' => 'Anne Marie Lolas', 'email' => 'annemarie.lolas@festival.cl', 'phone' => '+56 9 0000 0026', 'assignedSeatsCount' => 0],
+        ['id' => 'part-1', 'name' => 'Ana Francisca Pizarro Ruiz', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Reflejos de Oriente Tarapacá', 'teacher' => 'Adriana Campos', 'contactPerson' => 'Adriana Campos', 'email' => 'anapizarroruiz@gmail.com', 'phone' => '+56982840695', 'instagram' => '@anafcaaa', 'facebook' => 'https://www.facebook.com/share/1CB7u9Q3jW/', 'tiktok' => '@ana.franciska', 'assignedSeatsCount' => 0],
+        ['id' => 'part-2', 'name' => 'Grupo Shazaditas Teens', 'type' => 'grupo', 'dancersCount' => 8, 'school' => 'Estudio Shazadi Fitness Integrado', 'teacher' => 'Shazadi', 'contactPerson' => 'Shazadi', 'email' => 'profesorashazadi@gmail.com', 'phone' => '+56956208233', 'instagram' => '@shazadioficial, @shazadi.fitnessintegrado', 'facebook' => 'Shazadi', 'tiktok' => 'Shazadi Fitness Integrado', 'assignedSeatsCount' => 0],
+        ['id' => 'part-3', 'name' => 'Grupo Shazaditas Evolution', 'type' => 'grupo', 'dancersCount' => 10, 'school' => 'Estudio Shazadi Fitness Integrado', 'teacher' => 'Shazadi', 'contactPerson' => 'Shazadi', 'email' => 'profesorashazadi@gmail.com', 'phone' => '+56956208233', 'instagram' => '@shazadioficial, @shazadi.fitnessintegrado', 'facebook' => 'Shazadi', 'tiktok' => 'Shazadi Fitness Integrado', 'assignedSeatsCount' => 0],
+        ['id' => 'part-4', 'name' => 'Grupo Shazaditas Essence', 'type' => 'grupo', 'dancersCount' => 8, 'school' => 'Estudio Shazadi Fitness Integrado', 'teacher' => 'Shazadi', 'contactPerson' => 'Shazadi', 'email' => 'profesorashazadi@gmail.com', 'phone' => '+56956208233', 'instagram' => '@shazadioficial, @shazadi.fitnessintegrado', 'facebook' => 'Shazadi', 'tiktok' => 'Shazadi Fitness Integrado', 'assignedSeatsCount' => 0],
+        ['id' => 'part-5', 'name' => 'Ballet Shazaditas Styles', 'type' => 'grupo', 'dancersCount' => 12, 'school' => 'Estudio Shazadi Fitness Integrado', 'teacher' => 'Shazadi', 'contactPerson' => 'Shazadi', 'email' => 'profesorashazadi@gmail.com', 'phone' => '+56956208233', 'instagram' => '@shazadioficial, @shazadi.fitnessintegrado', 'facebook' => 'Shazadi', 'tiktok' => 'Shazadi Fitness Integrado', 'assignedSeatsCount' => 0],
+        ['id' => 'part-6', 'name' => 'Adriana Campos', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Reflejos de Oriente', 'teacher' => 'Adriana Campos', 'contactPerson' => 'Adriana Campos', 'email' => 'adrianacamposchile@gmail.com', 'phone' => '+56998312127', 'instagram' => '@adrianacamposchile, @reflejosdeoriente', 'facebook' => 'Adriana Campos Reflejos de Oriente', 'tiktok' => '@adrianacamposchile, @reflejosdeorientechile', 'assignedSeatsCount' => 0],
+        ['id' => 'part-7', 'name' => 'Adarah Bellydance', 'type' => 'grupo', 'dancersCount' => 6, 'school' => 'Raks Al Hayat', 'teacher' => 'Cristina Fuentes', 'contactPerson' => 'Cristina Fuentes', 'email' => 'bellydance.adarah@gmail.com', 'phone' => '+56985492036', 'instagram' => '@adarah_bellydance, @krissfuentes', 'facebook' => 'Cristina Fuentes', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-8', 'name' => 'Daisy Bustos Sánchez / Kardelens', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Bailarina solista', 'teacher' => 'Daisy Bustos Sánchez', 'contactPerson' => 'Daisy Bustos Sánchez', 'email' => 'duqsa.daisy@gmail.com', 'phone' => '+56991453275', 'instagram' => '@__kardelens', 'facebook' => 'Daisy M Bustos S', 'tiktok' => '@__kardelens', 'assignedSeatsCount' => 0],
+        ['id' => 'part-9', 'name' => 'Priscilla Bellydancer', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Raks El Hob', 'teacher' => 'Priscilla Bellydancer', 'contactPerson' => 'Priscilla Bellydancer', 'email' => 'priscillavelarde@hotmail.com', 'phone' => '+56961680169', 'instagram' => '@priscilla_bellydance', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-10', 'name' => 'Grupo de alumnas (Fabiola Andrade)', 'type' => 'grupo', 'dancersCount' => 15, 'school' => 'Escuela de Danza Oriental Fabiola Andrade', 'teacher' => 'Fabiola Andrade Benavides', 'contactPerson' => 'Fabiola Andrade Benavides', 'email' => 'fabiola.danzaa@gmail.com', 'phone' => '+56962134849', 'instagram' => '@fabioladanzaholistica, @siembrasdearte', 'facebook' => 'Fabiola Andrade Benavides', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-11', 'name' => 'Raks Mahaila', 'type' => 'grupo', 'dancersCount' => 10, 'school' => 'Mahaila May y alumnas', 'teacher' => 'María Soledad Lazo / Mahaila', 'contactPerson' => 'María Soledad Lazo / Mahaila', 'email' => 'mayartistico@gmail.com', 'phone' => '+56996995261', 'instagram' => '@danzaypilates_mahailamay', 'facebook' => 'Mahaila May Lazo', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-12', 'name' => 'Casandra (Solista)', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Casandra', 'teacher' => 'Mabel Casandra Parra Albarrán', 'contactPerson' => 'Mabel Casandra Parra Albarrán', 'email' => 'mabel.parra.albarran@gmail.com', 'phone' => '+56999957255', 'instagram' => '@casandra_albarran', 'facebook' => 'Casandra Albarrán', 'tiktok' => 'Casandra Bellydancer', 'assignedSeatsCount' => 0],
+        ['id' => 'part-13', 'name' => 'Grupo Casandra', 'type' => 'grupo', 'dancersCount' => 8, 'school' => 'Casandra', 'teacher' => 'Mabel Casandra Parra Albarrán', 'contactPerson' => 'Mabel Casandra Parra Albarrán', 'email' => 'mabel.parra.albarran@gmail.com', 'phone' => '+56999957255', 'instagram' => '@casandra_albarran', 'facebook' => 'Casandra Albarrán', 'tiktok' => 'Casandra Bellydancer', 'assignedSeatsCount' => 0],
+        ['id' => 'part-14', 'name' => 'Grupo Arwam al shams', 'type' => 'grupo', 'dancersCount' => 6, 'school' => 'Academia Farida Warda', 'teacher' => 'Farida Warda', 'contactPerson' => 'Farida Warda', 'email' => 'faridawarda.bailarina@gmail.com', 'phone' => '+56975875954', 'instagram' => '@arwamalshams', 'facebook' => 'Academia Farida Warda', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-15', 'name' => 'Grupo Festival Raks El Hob', 'type' => 'grupo', 'dancersCount' => 12, 'school' => 'Festival Raks El Hob', 'teacher' => 'Priscilla', 'contactPerson' => 'Priscilla', 'email' => 'priscillavelarde@hotmail.com', 'phone' => '+56961680169', 'instagram' => '@festival_raks_el_hob', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-16', 'name' => 'Arwah al Azhar', 'type' => 'grupo', 'dancersCount' => 8, 'school' => 'Sayes Bellydance', 'teacher' => 'Vania Sayes', 'contactPerson' => 'Vania Sayes', 'email' => 'sayesvania77@gmail.com', 'phone' => '+56956253440', 'instagram' => '@arwahalazhar.ballet', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-17', 'name' => 'Sofía Martínez', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Sofía Martínez', 'teacher' => 'Sofía Martínez', 'contactPerson' => 'Sofía Martínez', 'email' => 'ansolu23@hotmail.com', 'phone' => '+569945391326', 'instagram' => '@ansolu23', 'facebook' => 'Sofía Hernández Martínez', 'tiktok' => '@ansolu23', 'assignedSeatsCount' => 0],
+        ['id' => 'part-18', 'name' => 'Grupo Habibi Danza', 'type' => 'grupo', 'dancersCount' => 10, 'school' => 'Habibi Danza Cajón del Maipo', 'teacher' => 'Cristina Acevedo', 'contactPerson' => 'Cristina Acevedo', 'email' => 'habibidanzacajondelmaipo@gmail.com', 'phone' => '+56984556278', 'instagram' => '@habibidanzacajondelmaipo', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-19', 'name' => 'Grupo Will Bellydancer', 'type' => 'grupo', 'dancersCount' => 12, 'school' => 'Escuela Will Bellydancer', 'teacher' => 'Wilma Galleguillos Fuentes', 'contactPerson' => 'Wilma Galleguillos Fuentes', 'email' => 'willcarolina2@gmail.com', 'phone' => '+56991428303', 'instagram' => '@willbellydancer, @escuela_willbellydancer', 'facebook' => 'Wilma Galleguillos Will Bellydancer San Bernardo', 'tiktok' => '@willbellydancer2.0', 'assignedSeatsCount' => 0],
+        ['id' => 'part-20', 'name' => 'Grupo Malikas', 'type' => 'grupo', 'dancersCount' => 6, 'school' => 'Dana Amar', 'teacher' => 'Dana Amar / Javiera Avendaño', 'contactPerson' => 'Dana Amar / Javiera Avendaño', 'email' => 'javiera.avendano@gmail.com', 'phone' => '+56982194471', 'instagram' => '@jaivalaseca', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-21', 'name' => 'Grupo Zahra Al Ruh', 'type' => 'grupo', 'dancersCount' => 8, 'school' => 'Dana Amar', 'teacher' => 'Danahe Zablah / Claudia Álvarez', 'contactPerson' => 'Danahe Zablah / Claudia Álvarez', 'email' => 'claudialvarezc8@gmail.com', 'phone' => '+56956036534', 'instagram' => '@_bazar_clau', 'facebook' => 'Claudia Andrea Álvarez Concha', 'tiktok' => '@claudiaalvarez6354', 'assignedSeatsCount' => 0],
+        ['id' => 'part-22', 'name' => 'Grupo Alsabalal', 'type' => 'grupo', 'dancersCount' => 8, 'school' => 'Academia Farida Warda', 'teacher' => 'Farida Warda', 'contactPerson' => 'Farida Warda', 'email' => 'faridawarda.bailarina@gmail.com', 'phone' => '+56975875954', 'instagram' => '@alsabalal', 'facebook' => 'Academia Farida Warda', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-23', 'name' => 'Nazarena', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Dana Amar', 'teacher' => 'Dana Amar / Antonia Paz Lama', 'contactPerson' => 'Dana Amar / Antonia Paz Lama', 'email' => 'antopazlama@gmail.com', 'phone' => '+56972535664', 'instagram' => '@antooo_lama', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-24', 'name' => 'Raquel Farías', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Mawal', 'teacher' => 'Raquel Farías', 'contactPerson' => 'Raquel Farías', 'email' => 'raquel_fariasgordon@yahoo.es', 'phone' => '+56997309988', 'instagram' => '@profe.danza.arabe', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-25', 'name' => 'Diana Valle', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Diana Valle González', 'teacher' => 'Diana Valle González', 'contactPerson' => 'Diana Valle González', 'email' => 'katherine.valle@gmail.com', 'phone' => '+56995126639', 'instagram' => '@dianavalle_danzadelvientre', 'facebook' => '@diana.vallegonzalez', 'tiktok' => '', 'assignedSeatsCount' => 0],
+        ['id' => 'part-26', 'name' => 'Anne Marie Lolas', 'type' => 'solista', 'dancersCount' => 1, 'school' => 'Anne Marie Lolas', 'teacher' => 'Anne Marie Lolas', 'contactPerson' => 'Anne Marie Lolas', 'email' => 'anne.lolas.s@gmail.com', 'phone' => '+56992517727', 'instagram' => '@anne_lolas_danzarabe', 'facebook' => '', 'tiktok' => '', 'assignedSeatsCount' => 0],
     ];
 }
 
-// Load existing data
-$existingData = null;
-if (file_exists($dataFile)) {
-    $raw = file_get_contents($dataFile);
-    $existingData = json_decode($raw, true);
-}
+// Process GET Request: Return MySQL or SQLite Database Data
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    try {
+        $pdo = getDBConnection();
 
-// Check if seats exist and match the 34-column layout (checking seat 'A34')
-$isValidLayout = false;
-if ($existingData && isset($existingData['seats']) && is_array($existingData['seats']) && count($existingData['seats']) === 544) {
-    foreach ($existingData['seats'] as $s) {
-        if ($s['id'] === 'A34') {
-            $isValidLayout = true;
-            break;
+        // Seed seats table if empty
+        $countStmt = $pdo->query("SELECT COUNT(*) FROM seats");
+        if ((int)$countStmt->fetchColumn() < 544) {
+            $pdo->beginTransaction();
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sql = $isMySQL
+                ? "INSERT INTO seats (id, row_name, seat_number, padded_number, block, status, assigned_participant_id, assigned_participant_name, ticket_code, pdf_filename, checked_in_at)
+                   VALUES (:id, :row_name, :seat_number, :padded_number, :block, :status, :assigned_participant_id, :assigned_participant_name, :ticket_code, :pdf_filename, :checked_in_at)
+                   ON DUPLICATE KEY UPDATE status=VALUES(status)"
+                : "INSERT OR REPLACE INTO seats (id, row_name, seat_number, padded_number, block, status, assigned_participant_id, assigned_participant_name, ticket_code, pdf_filename, checked_in_at)
+                   VALUES (:id, :row_name, :seat_number, :padded_number, :block, :status, :assigned_participant_id, :assigned_participant_name, :ticket_code, :pdf_filename, :checked_in_at)";
+
+            $insertSeat = $pdo->prepare($sql);
+            foreach (generateDefaultSeats() as $s) {
+                $insertSeat->execute([
+                    ':id' => $s['id'],
+                    ':row_name' => $s['row'],
+                    ':seat_number' => $s['number'],
+                    ':padded_number' => $s['paddedNumber'],
+                    ':block' => $s['block'],
+                    ':status' => $s['status'],
+                    ':assigned_participant_id' => $s['assignedParticipantId'],
+                    ':assigned_participant_name' => $s['assignedParticipantName'],
+                    ':ticket_code' => $s['ticketCode'],
+                    ':pdf_filename' => $s['pdfFilename'],
+                    ':checked_in_at' => $s['checkedInAt']
+                ]);
+            }
+            $pdo->commit();
         }
+
+        // Always re-sync participants table with default participants if count != 26
+        $pCount = $pdo->query("SELECT COUNT(*) FROM participants");
+        if ((int)$pCount->fetchColumn() !== 26) {
+            $pdo->beginTransaction();
+            $pdo->exec("DELETE FROM participants");
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sqlP = "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+                     VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)";
+
+            $insertP = $pdo->prepare($sqlP);
+            foreach (getDefaultParticipants() as $p) {
+                $insertP->execute([
+                    ':id' => $p['id'],
+                    ':name' => $p['name'],
+                    ':type' => $p['type'],
+                    ':dancers_count' => $p['dancersCount'],
+                    ':contact_person' => $p['contactPerson'],
+                    ':email' => $p['email'],
+                    ':phone' => $p['phone'],
+                    ':school' => isset($p['school']) ? $p['school'] : '',
+                    ':teacher' => isset($p['teacher']) ? $p['teacher'] : '',
+                    ':instagram' => isset($p['instagram']) ? $p['instagram'] : '',
+                    ':facebook' => isset($p['facebook']) ? $p['facebook'] : '',
+                    ':tiktok' => isset($p['tiktok']) ? $p['tiktok'] : '',
+                    ':assigned_seats_count' => $p['assignedSeatsCount']
+                ]);
+            }
+            $pdo->commit();
+        }
+
+        // Fetch seats
+        $seatRows = $pdo->query("SELECT * FROM seats ORDER BY row_name ASC, seat_number ASC")->fetchAll();
+        $seats = array_map(function($r) {
+            return [
+                'id' => $r['id'],
+                'row' => $r['row_name'],
+                'number' => (int)$r['seat_number'],
+                'paddedNumber' => $r['padded_number'],
+                'block' => $r['block'],
+                'status' => $r['status'],
+                'assignedParticipantId' => $r['assigned_participant_id'],
+                'assignedParticipantName' => $r['assigned_participant_name'],
+                'ticketCode' => $r['ticket_code'],
+                'pdfFilename' => $r['pdf_filename'],
+                'checkedInAt' => $r['checked_in_at']
+            ];
+        }, $seatRows);
+
+        // Fetch participants
+        $partRows = $pdo->query("SELECT * FROM participants ORDER BY name ASC")->fetchAll();
+        $participants = array_map(function($r) {
+            return [
+                'id' => $r['id'],
+                'name' => $r['name'],
+                'type' => $r['type'],
+                'dancersCount' => (int)$r['dancers_count'],
+                'contactPerson' => $r['contact_person'],
+                'email' => $r['email'],
+                'phone' => $r['phone'],
+                'school' => isset($r['school']) ? $r['school'] : '',
+                'teacher' => isset($r['teacher']) ? $r['teacher'] : '',
+                'instagram' => isset($r['instagram']) ? $r['instagram'] : '',
+                'facebook' => isset($r['facebook']) ? $r['facebook'] : '',
+                'tiktok' => isset($r['tiktok']) ? $r['tiktok'] : '',
+                'assignedSeatsCount' => (int)$r['assigned_seats_count']
+            ];
+        }, $partRows);
+
+        // Fetch assignments
+        $asgnRows = $pdo->query("SELECT * FROM assignments ORDER BY date_str DESC")->fetchAll();
+        $assignments = array_map(function($r) {
+            return [
+                'id' => $r['id'],
+                'date' => $r['date_str'],
+                'participantId' => $r['participant_id'],
+                'participantName' => $r['participant_name'],
+                'seatIds' => json_decode($r['seat_ids_json'], true) ?: [],
+                'sentToEmail' => $r['sent_to_email'],
+                'sentBy' => $r['sent_by'],
+                'status' => $r['status']
+            ];
+        }, $asgnRows);
+
+        // Fetch scan logs
+        $logRows = $pdo->query("SELECT * FROM scan_logs ORDER BY id DESC LIMIT 100")->fetchAll();
+        $scanLogs = array_map(function($r) {
+            return [
+                'id' => $r['id'],
+                'time' => $r['time_str'],
+                'seatId' => $r['seat_id'],
+                'row' => $r['row_name'],
+                'number' => (int)$r['seat_number'],
+                'participantName' => $r['participant_name'],
+                'status' => $r['status'],
+                'message' => $r['message']
+            ];
+        }, $logRows);
+
+        echo json_encode([
+            'engine' => (defined('DB_TYPE') && DB_TYPE === 'mysql') ? 'mysql_phpmyadmin' : 'sqlite_database',
+            'seats' => $seats,
+            'participants' => $participants,
+            'assignments' => $assignments,
+            'scanLogs' => $scanLogs,
+            'lastUpdated' => date('c')
+        ], JSON_UNESCAPED_UNICODE);
+        exit(0);
+
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
+        exit(1);
     }
 }
 
-if (!$isValidLayout) {
-    $existingData = [
-        'seats' => generateDefaultServerSeats(),
-        'participants' => getDefaultParticipants(),
-        'assignments' => [],
-        'scanLogs' => isset($existingData['scanLogs']) && is_array($existingData['scanLogs']) ? $existingData['scanLogs'] : [],
-        'lastUpdated' => date('c')
-    ];
-    file_put_contents($dataFile, json_encode($existingData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
-}
-
-// GET: Retrieve central shared state
-if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-    echo json_encode($existingData, JSON_UNESCAPED_UNICODE);
-    exit(0);
-}
-
-// POST: Update central shared state with Smart Merging
+// Process POST Request: Update Database
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = file_get_contents('php://input');
     $incoming = json_decode($input, true);
@@ -125,88 +376,130 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit(1);
     }
 
-    // Smart Merge Seats: merge seat by seat by seat ID
-    if (isset($incoming['seats']) && is_array($incoming['seats']) && count($incoming['seats']) >= 500) {
-        $seatsMap = [];
-        foreach ($existingData['seats'] as $s) {
-            $seatsMap[$s['id']] = $s;
-        }
+    try {
+        $pdo = getDBConnection();
+        $pdo->beginTransaction();
 
-        foreach ($incoming['seats'] as $incSeat) {
-            $sid = $incSeat['id'];
-            if (isset($seatsMap[$sid])) {
-                $currentStatus = $seatsMap[$sid]['status'];
-                $incStatus = $incSeat['status'];
+        // Update seats
+        if (isset($incoming['seats']) && is_array($incoming['seats'])) {
+            $stmtSeat = $pdo->prepare("
+                UPDATE seats SET
+                    status = :status,
+                    assigned_participant_id = :assigned_participant_id,
+                    assigned_participant_name = :assigned_participant_name,
+                    ticket_code = :ticket_code,
+                    pdf_filename = :pdf_filename,
+                    checked_in_at = :checked_in_at
+                WHERE id = :id
+            ");
 
-                $priority = ['available' => 1, 'assigned' => 2, 'sent' => 3, 'checked_in' => 4];
-                $currentP = isset($priority[$currentStatus]) ? $priority[$currentStatus] : 1;
-                $incP = isset($priority[$incStatus]) ? $priority[$incStatus] : 1;
-
-                if ($incP >= $currentP) {
-                    $seatsMap[$sid] = array_merge($seatsMap[$sid], $incSeat);
-                }
+            foreach ($incoming['seats'] as $s) {
+                $stmtSeat->execute([
+                    ':id' => $s['id'],
+                    ':status' => $s['status'],
+                    ':assigned_participant_id' => isset($s['assignedParticipantId']) ? $s['assignedParticipantId'] : null,
+                    ':assigned_participant_name' => isset($s['assignedParticipantName']) ? $s['assignedParticipantName'] : null,
+                    ':ticket_code' => isset($s['ticketCode']) ? $s['ticketCode'] : null,
+                    ':pdf_filename' => isset($s['pdfFilename']) ? $s['pdfFilename'] : null,
+                    ':checked_in_at' => isset($s['checkedInAt']) ? $s['checkedInAt'] : null
+                ]);
             }
         }
-        $existingData['seats'] = array_values($seatsMap);
-    }
 
-    // Merge Participants
-    if (isset($incoming['participants']) && is_array($incoming['participants']) && count($incoming['participants']) > 0) {
-        $partMap = [];
-        foreach ($existingData['participants'] as $p) {
-            $partMap[$p['id']] = $p;
-        }
-        foreach ($incoming['participants'] as $incP) {
-            $partMap[$incP['id']] = $incP;
-        }
-        $existingData['participants'] = array_values($partMap);
-    }
+        // Update participants
+        if (isset($incoming['participants']) && is_array($incoming['participants'])) {
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sqlP = $isMySQL
+                ? "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+                   VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
+                   ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), phone=VALUES(phone), school=VALUES(school), teacher=VALUES(teacher), instagram=VALUES(instagram), facebook=VALUES(facebook), tiktok=VALUES(tiktok), assigned_seats_count=VALUES(assigned_seats_count)"
+                : "INSERT OR REPLACE INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+                   VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)";
 
-    // Merge Assignments
-    if (isset($incoming['assignments']) && is_array($incoming['assignments'])) {
-        $asgnMap = [];
-        foreach ($existingData['assignments'] as $a) {
-            $asgnMap[$a['id']] = $a;
+            $stmtP = $pdo->prepare($sqlP);
+            foreach ($incoming['participants'] as $p) {
+                $stmtP->execute([
+                    ':id' => $p['id'],
+                    ':name' => $p['name'],
+                    ':type' => isset($p['type']) ? $p['type'] : 'grupo',
+                    ':dancers_count' => isset($p['dancersCount']) ? (int)$p['dancersCount'] : 1,
+                    ':contact_person' => isset($p['contactPerson']) ? $p['contactPerson'] : '',
+                    ':email' => isset($p['email']) ? $p['email'] : '',
+                    ':phone' => isset($p['phone']) ? $p['phone'] : '',
+                    ':school' => isset($p['school']) ? $p['school'] : '',
+                    ':teacher' => isset($p['teacher']) ? $p['teacher'] : '',
+                    ':instagram' => isset($p['instagram']) ? $p['instagram'] : '',
+                    ':facebook' => isset($p['facebook']) ? $p['facebook'] : '',
+                    ':tiktok' => isset($p['tiktok']) ? $p['tiktok'] : '',
+                    ':assigned_seats_count' => isset($p['assignedSeatsCount']) ? (int)$p['assignedSeatsCount'] : 0
+                ]);
+            }
         }
-        foreach ($incoming['assignments'] as $incA) {
-            $asgnMap[$incA['id']] = $incA;
+
+        // Update assignments
+        if (isset($incoming['assignments']) && is_array($incoming['assignments'])) {
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sqlA = $isMySQL
+                ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+                   VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
+                   ON DUPLICATE KEY UPDATE status=VALUES(status)"
+                : "INSERT OR REPLACE INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+                   VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)";
+
+            $stmtA = $pdo->prepare($sqlA);
+            foreach ($incoming['assignments'] as $a) {
+                $stmtA->execute([
+                    ':id' => $a['id'],
+                    ':date_str' => isset($a['date']) ? $a['date'] : date('d/m/Y H:i'),
+                    ':participant_id' => $a['participantId'],
+                    ':participant_name' => $a['participantName'],
+                    ':seat_ids_json' => json_encode(isset($a['seatIds']) ? $a['seatIds'] : []),
+                    ':sent_to_email' => isset($a['sentToEmail']) ? $a['sentToEmail'] : '',
+                    ':sent_by' => isset($a['sentBy']) ? $a['sentBy'] : 'Sistema',
+                    ':status' => isset($a['status']) ? $a['status'] : 'Asignado'
+                ]);
+            }
         }
-        $existingData['assignments'] = array_values($asgnMap);
-    }
 
-    // Merge Scan Logs
-    if (isset($incoming['scanLogs']) && is_array($incoming['scanLogs'])) {
-        $logMap = [];
-        foreach ($existingData['scanLogs'] as $l) {
-            $logMap[$l['id']] = $l;
+        // Insert new scan log
+        if (isset($incoming['newScanLog']) && is_array($incoming['newScanLog'])) {
+            $l = $incoming['newScanLog'];
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sqlL = $isMySQL
+                ? "INSERT INTO scan_logs (id, time_str, seat_id, row_name, seat_number, participant_name, status, message)
+                   VALUES (:id, :time_str, :seat_id, :row_name, :seat_number, :participant_name, :status, :message)
+                   ON DUPLICATE KEY UPDATE message=VALUES(message)"
+                : "INSERT OR REPLACE INTO scan_logs (id, time_str, seat_id, row_name, seat_number, participant_name, status, message)
+                   VALUES (:id, :time_str, :seat_id, :row_name, :seat_number, :participant_name, :status, :message)";
+
+            $stmtL = $pdo->prepare($sqlL);
+            $stmtL->execute([
+                ':id' => $l['id'],
+                ':time_str' => $l['time'],
+                ':seat_id' => $l['seatId'],
+                ':row_name' => $l['row'],
+                ':seat_number' => (int)$l['number'],
+                ':participant_name' => $l['participantName'],
+                ':status' => $l['status'],
+                ':message' => $l['message']
+            ]);
         }
-        foreach ($incoming['scanLogs'] as $incL) {
-            $logMap[$incL['id']] = $incL;
+
+        $pdo->commit();
+
+        echo json_encode([
+            'success' => true,
+            'engine' => (defined('DB_TYPE') && DB_TYPE === 'mysql') ? 'mysql_phpmyadmin' : 'sqlite_database',
+            'message' => 'Database synchronized successfully'
+        ]);
+        exit(0);
+
+    } catch (Exception $e) {
+        if (isset($pdo) && $pdo->inTransaction()) {
+            $pdo->rollBack();
         }
-        $existingData['scanLogs'] = array_values($logMap);
-    }
-
-    if (isset($incoming['newScanLog']) && is_array($incoming['newScanLog'])) {
-        if (!isset($existingData['scanLogs']) || !is_array($existingData['scanLogs'])) {
-            $existingData['scanLogs'] = [];
-        }
-        array_unshift($existingData['scanLogs'], $incoming['newScanLog']);
-    }
-
-    $existingData['lastUpdated'] = date('c');
-
-    $saved = file_put_contents($dataFile, json_encode($existingData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
-
-    if ($saved === false) {
         http_response_code(500);
-        echo json_encode(['error' => 'Failed to save data']);
+        echo json_encode(['error' => 'Database update error: ' . $e->getMessage()]);
         exit(1);
     }
-
-    echo json_encode([
-        'success' => true,
-        'message' => 'Data synchronized successfully',
-        'data' => $existingData
-    ]);
-    exit(0);
 }
