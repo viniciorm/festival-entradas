@@ -301,6 +301,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         // ONE-TIME CLEANUP FOR TEENS CONFLICT RECORD
         $pdo->exec("UPDATE assignments SET seat_ids_json = '[\"B9\",\"B10\",\"B11\",\"B12\",\"B13\",\"B14\",\"B15\"]' WHERE id = 'asgn-1786381664534'");
 
+        // ONE-TIME MIGRATION FOR ARWAM AL SHAMS 10 SEATS (I9-I13, J14-J18)
+        $arwamSeats = ["I9","I10","I11","I12","I13","J14","J15","J16","J17","J18"];
+        $arwamJson = json_encode($arwamSeats);
+        $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+        $sqlArwam = $isMySQL
+            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-arwam-1', '10-08-26, 6:03 p. m.', 'part-14', 'Grupo Arwam al shams', '{$arwamJson}', 'faridawarda.bailarina@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON DUPLICATE KEY UPDATE seat_ids_json='{$arwamJson}', status='Enviado'"
+            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-arwam-1', '10-08-26, 6:03 p. m.', 'part-14', 'Grupo Arwam al shams', '{$arwamJson}', 'faridawarda.bailarina@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$arwamJson}', status='Enviado'";
+        $pdo->exec($sqlArwam);
+
+        $stmtArwamSeats = $pdo->prepare("
+            UPDATE seats SET
+                status = 'sent',
+                assigned_participant_id = 'part-14',
+                assigned_participant_name = 'Grupo Arwam al shams'
+            WHERE id = :id
+        ");
+        foreach ($arwamSeats as $sId) {
+            $stmtArwamSeats->execute([':id' => $sId]);
+        }
+
+        $pdo->exec("
+            UPDATE participants SET assigned_seats_count = (
+                SELECT COUNT(*) FROM seats WHERE assigned_participant_id = 'part-14' AND status != 'available'
+            ) WHERE id = 'part-14'
+        ");
+
         // Fetch seats (PURE READ-ONLY)
         $seatRows = $pdo->query("SELECT * FROM seats ORDER BY row_name ASC, seat_number ASC")->fetchAll();
         $seats = array_map(function($r) {
