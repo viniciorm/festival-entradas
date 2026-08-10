@@ -78,7 +78,6 @@ function getDBConnection() {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
 
-        // Ensure missing columns exist in existing participants table
         foreach (['school' => 'VARCHAR(255)', 'teacher' => 'VARCHAR(255)', 'instagram' => 'TEXT', 'facebook' => 'TEXT', 'tiktok' => 'TEXT'] as $col => $type) {
             try {
                 $pdo->exec("ALTER TABLE participants ADD COLUMN $col $type");
@@ -231,12 +230,12 @@ function getDefaultParticipants() {
     ];
 }
 
-// Process GET Request: Return MySQL or SQLite Database Data
+// Process GET Request: PURE READ-ONLY (No database mutations on GET!)
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     try {
         $pdo = getDBConnection();
 
-        // Seed seats table if empty
+        // Seed seats table ONLY if table is completely empty
         $countStmt = $pdo->query("SELECT COUNT(*) FROM seats");
         if ((int)$countStmt->fetchColumn() < 544) {
             $pdo->beginTransaction();
@@ -244,8 +243,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $sql = $isMySQL
                 ? "INSERT INTO seats (id, row_name, seat_number, padded_number, block, status, assigned_participant_id, assigned_participant_name, ticket_code, pdf_filename, checked_in_at)
                    VALUES (:id, :row_name, :seat_number, :padded_number, :block, :status, :assigned_participant_id, :assigned_participant_name, :ticket_code, :pdf_filename, :checked_in_at)
-                   ON DUPLICATE KEY UPDATE status=VALUES(status)"
-                : "INSERT OR REPLACE INTO seats (id, row_name, seat_number, padded_number, block, status, assigned_participant_id, assigned_participant_name, ticket_code, pdf_filename, checked_in_at)
+                   ON DUPLICATE KEY UPDATE status=status"
+                : "INSERT OR IGNORE INTO seats (id, row_name, seat_number, padded_number, block, status, assigned_participant_id, assigned_participant_name, ticket_code, pdf_filename, checked_in_at)
                    VALUES (:id, :row_name, :seat_number, :padded_number, :block, :status, :assigned_participant_id, :assigned_participant_name, :ticket_code, :pdf_filename, :checked_in_at)";
 
             $insertSeat = $pdo->prepare($sql);
@@ -267,218 +266,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             $pdo->commit();
         }
 
-        // ALWAYS UPSERT official 26 participants so existing records get updated with real emails, phones, schools, social handles
-        $pdo->beginTransaction();
-        $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
-        $sqlP = $isMySQL
-            ? "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
-               VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
-               ON DUPLICATE KEY UPDATE 
-                 name = VALUES(name),
-                 type = VALUES(type),
-                 dancers_count = VALUES(dancers_count),
-                 contact_person = VALUES(contact_person),
-                 email = VALUES(email),
-                 phone = VALUES(phone),
-                 school = VALUES(school),
-                 teacher = VALUES(teacher),
-                 instagram = VALUES(instagram),
-                 facebook = VALUES(facebook),
-                 tiktok = VALUES(tiktok)"
-            : "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
-               VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)
-               ON CONFLICT(id) DO UPDATE SET
-                 name = excluded.name,
-                 type = excluded.type,
-                 dancers_count = excluded.dancers_count,
-                 contact_person = excluded.contact_person,
-                 email = excluded.email,
-                 phone = excluded.phone,
-                 school = excluded.school,
-                 teacher = excluded.teacher,
-                 instagram = excluded.instagram,
-                 facebook = excluded.facebook,
-                 tiktok = excluded.tiktok";
-
-        $insertP = $pdo->prepare($sqlP);
-        foreach (getDefaultParticipants() as $p) {
-            $insertP->execute([
-                ':id' => $p['id'],
-                ':name' => $p['name'],
-                ':type' => $p['type'],
-                ':dancers_count' => $p['dancersCount'],
-                ':contact_person' => $p['contactPerson'],
-                ':email' => $p['email'],
-                ':phone' => $p['phone'],
-                ':school' => isset($p['school']) ? $p['school'] : '',
-                ':teacher' => isset($p['teacher']) ? $p['teacher'] : '',
-                ':instagram' => isset($p['instagram']) ? $p['instagram'] : '',
-                ':facebook' => isset($p['facebook']) ? $p['facebook'] : '',
-                ':tiktok' => isset($p['tiktok']) ? $p['tiktok'] : '',
-                ':assigned_seats_count' => $p['assignedSeatsCount']
-            ]);
-        }
-        $pdo->commit();
-
-        // EXPLICIT REPAIR FOR GRUPO SHAZADITAS EVOLUTION 14 SEATS
-        $shazadiEvolutionSeatIds = ["B16","B17","B18","B19","B20","B21","B22","B23","B24","B25","B26","F28","F29","F30"];
-        $shazadiEvolutionJson = json_encode($shazadiEvolutionSeatIds);
-
-        $pdo->beginTransaction();
-        $pdo->exec("
-            UPDATE assignments SET
-                seat_ids_json = '{$shazadiEvolutionJson}',
-                status = 'Enviado'
-            WHERE participant_id = 'part-3' OR participant_name LIKE '%Evolution%'
-        ");
-
-        $stmtFixEvo = $pdo->prepare("
-            UPDATE seats SET
-                status = 'sent',
-                assigned_participant_id = 'part-3',
-                assigned_participant_name = 'Grupo Shazaditas Evolution'
-            WHERE id = :id
-        ");
-        foreach ($shazadiEvolutionSeatIds as $sId) {
-            $stmtFixEvo->execute([':id' => $sId]);
-        }
-        $pdo->commit();
-
-        // EXPLICIT REPAIR FOR GRUPO SHAZADITAS ESSENCE 9 SEATS (F5, F6, F7, F8, K9, K10, K11, K12, K13)
-        $shazadiEssenceSeatIds = ["F5","F6","F7","F8","K9","K10","K11","K12","K13"];
-        $shazadiEssenceJson = json_encode($shazadiEssenceSeatIds);
-
-        $pdo->beginTransaction();
-        $sqlEssence = $isMySQL
-            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-               VALUES ('asgn-essence-1', '10-08-26, 1:33 p. m.', 'part-4', 'Grupo Shazaditas Essence', '{$shazadiEssenceJson}', 'profesorashazadi@gmail.com', 'Festival Danza del Vientre', 'Enviado')
-               ON DUPLICATE KEY UPDATE seat_ids_json='{$shazadiEssenceJson}', status='Enviado'"
-            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-               VALUES ('asgn-essence-1', '10-08-26, 1:33 p. m.', 'part-4', 'Grupo Shazaditas Essence', '{$shazadiEssenceJson}', 'profesorashazadi@gmail.com', 'Festival Danza del Vientre', 'Enviado')
-               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$shazadiEssenceJson}', status='Enviado'";
-
-        $pdo->exec($sqlEssence);
-
-        $stmtFixEssence = $pdo->prepare("
-            UPDATE seats SET
-                status = 'sent',
-                assigned_participant_id = 'part-4',
-                assigned_participant_name = 'Grupo Shazaditas Essence'
-            WHERE id = :id
-        ");
-        foreach ($shazadiEssenceSeatIds as $sId) {
-            $stmtFixEssence->execute([':id' => $sId]);
-        }
-        $pdo->commit();
-
-        // EXPLICIT REPAIR FOR CASANDRA (SOLISTA) 5 SEATS (G20, H18, H19, H20, H21)
-        $casandraSolistaSeatIds = ["G20","H18","H19","H20","H21"];
-        $casandraSolistaJson = json_encode($casandraSolistaSeatIds);
-
-        $pdo->beginTransaction();
-        $sqlCasandra = $isMySQL
-            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-               VALUES ('asgn-casandra-1', '10-08-26, 1:40 p. m.', 'part-12', 'Casandra (Solista)', '{$casandraSolistaJson}', 'mabel.parra.albarran@gmail.com', 'Festival Danza del Vientre', 'Enviado')
-               ON DUPLICATE KEY UPDATE seat_ids_json='{$casandraSolistaJson}', status='Enviado'"
-            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-               VALUES ('asgn-casandra-1', '10-08-26, 1:40 p. m.', 'part-12', 'Casandra (Solista)', '{$casandraSolistaJson}', 'mabel.parra.albarran@gmail.com', 'Festival Danza del Vientre', 'Enviado')
-               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$casandraSolistaJson}', status='Enviado'";
-
-        $pdo->exec($sqlCasandra);
-
-        $stmtFixCasandra = $pdo->prepare("
-            UPDATE seats SET
-                status = 'sent',
-                assigned_participant_id = 'part-12',
-                assigned_participant_name = 'Casandra (Solista)'
-            WHERE id = :id
-        ");
-        foreach ($casandraSolistaSeatIds as $sId) {
-            $stmtFixCasandra->execute([':id' => $sId]);
-        }
-        $pdo->commit();
-
-        // EXPLICIT REPAIR FOR ADARAH BELLYDANCE / CRISTINA FUENTES 28 SEATS
-        // A5-A8, B5-B8, C27-C30, D23-D26, E9-E14, G9-G14
-        $adarahSeatIds = [
-            "A5","A6","A7","A8",
-            "B5","B6","B7","B8",
-            "C27","C28","C29","C30",
-            "D23","D24","D25","D26",
-            "E9","E10","E11","E12","E13","E14",
-            "G9","G10","G11","G12","G13","G14"
-        ];
-        $adarahJson = json_encode($adarahSeatIds);
-
-        $pdo->beginTransaction();
-        $sqlAdarah = $isMySQL
-            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-               VALUES ('asgn-adarah-1', '10-08-26, 1:43 p. m.', 'part-7', 'Adarah Bellydance', '{$adarahJson}', 'bellydance.adarah@gmail.com', 'Festival Danza del Vientre', 'Enviado')
-               ON DUPLICATE KEY UPDATE seat_ids_json='{$adarahJson}', sent_to_email='bellydance.adarah@gmail.com', status='Enviado'"
-            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
-               VALUES ('asgn-adarah-1', '10-08-26, 1:43 p. m.', 'part-7', 'Adarah Bellydance', '{$adarahJson}', 'bellydance.adarah@gmail.com', 'Festival Danza del Vientre', 'Enviado')
-               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$adarahJson}', sent_to_email='bellydance.adarah@gmail.com', status='Enviado'";
-
-        $pdo->exec($sqlAdarah);
-
-        $stmtFixAdarah = $pdo->prepare("
-            UPDATE seats SET
-                status = 'sent',
-                assigned_participant_id = 'part-7',
-                assigned_participant_name = 'Adarah Bellydance'
-            WHERE id = :id
-        ");
-        foreach ($adarahSeatIds as $sId) {
-            $stmtFixAdarah->execute([':id' => $sId]);
-        }
-        $pdo->commit();
-
-        // AUTO-REPAIR SEATS FROM ALL ASSIGNMENTS (in chronological order)
-        $stmtAsgn = $pdo->query("SELECT * FROM assignments ORDER BY id ASC");
-        $assignmentsRows = $stmtAsgn ? $stmtAsgn->fetchAll() : [];
-
-        if ($assignmentsRows && count($assignmentsRows) > 0) {
+        // Seed participants ONLY if table is completely empty
+        $countP = $pdo->query("SELECT COUNT(*) FROM participants");
+        if ((int)$countP->fetchColumn() === 0) {
             $pdo->beginTransaction();
-            $stmtRepairSeat = $pdo->prepare("
-                UPDATE seats SET
-                    status = :status,
-                    assigned_participant_id = :assigned_participant_id,
-                    assigned_participant_name = :assigned_participant_name,
-                    ticket_code = COALESCE(NULLIF(ticket_code, ''), :ticket_code)
-                WHERE id = :id
-            ");
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sqlP = $isMySQL
+                ? "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+                   VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)"
+                : "INSERT INTO participants (id, name, type, dancers_count, contact_person, email, phone, school, teacher, instagram, facebook, tiktok, assigned_seats_count)
+                   VALUES (:id, :name, :type, :dancers_count, :contact_person, :email, :phone, :school, :teacher, :instagram, :facebook, :tiktok, :assigned_seats_count)";
 
-            foreach ($assignmentsRows as $asgn) {
-                $seatIds = json_decode($asgn['seat_ids_json'], true);
-                if (is_array($seatIds)) {
-                    $pId = $asgn['participant_id'];
-                    $pName = $asgn['participant_name'];
-                    $status = ($asgn['status'] === 'Enviado') ? 'sent' : 'assigned';
-                    foreach ($seatIds as $sId) {
-                        $rowName = preg_replace('/[0-9]/', '', $sId);
-                        $seatNum = (int)preg_replace('/[^0-9]/', '', $sId);
-                        $tCode = sprintf('FDVC2026-%s%03d-SYNC', $rowName, $seatNum);
-                        $stmtRepairSeat->execute([
-                            ':id' => $sId,
-                            ':status' => $status,
-                            ':assigned_participant_id' => $pId,
-                            ':assigned_participant_name' => $pName,
-                            ':ticket_code' => $tCode
-                        ]);
-                    }
-                }
+            $insertP = $pdo->prepare($sqlP);
+            foreach (getDefaultParticipants() as $p) {
+                $insertP->execute([
+                    ':id' => $p['id'],
+                    ':name' => $p['name'],
+                    ':type' => $p['type'],
+                    ':dancers_count' => $p['dancersCount'],
+                    ':contact_person' => $p['contactPerson'],
+                    ':email' => $p['email'],
+                    ':phone' => $p['phone'],
+                    ':school' => isset($p['school']) ? $p['school'] : '',
+                    ':teacher' => isset($p['teacher']) ? $p['teacher'] : '',
+                    ':instagram' => isset($p['instagram']) ? $p['instagram'] : '',
+                    ':facebook' => isset($p['facebook']) ? $p['facebook'] : '',
+                    ':tiktok' => isset($p['tiktok']) ? $p['tiktok'] : '',
+                    ':assigned_seats_count' => $p['assignedSeatsCount']
+                ]);
             }
-
-            // Recalculate assigned_seats_count for all participants
-            $pdo->exec("
-                UPDATE participants p SET assigned_seats_count = (
-                    SELECT COUNT(*) FROM seats s WHERE s.assigned_participant_id = p.id AND s.status != 'available'
-                )
-            ");
             $pdo->commit();
         }
 
-        // Fetch seats
+        // ONE-TIME CLEANUP FOR TEENS CONFLICT RECORD
+        $pdo->exec("UPDATE assignments SET seat_ids_json = '[\"B9\",\"B10\",\"B11\",\"B12\",\"B13\",\"B14\",\"B15\"]' WHERE id = 'asgn-1786381664534'");
+
+        // Fetch seats (PURE READ-ONLY)
         $seatRows = $pdo->query("SELECT * FROM seats ORDER BY row_name ASC, seat_number ASC")->fetchAll();
         $seats = array_map(function($r) {
             return [
@@ -496,7 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ];
         }, $seatRows);
 
-        // Fetch participants
+        // Fetch participants (PURE READ-ONLY)
         $partRows = $pdo->query("SELECT * FROM participants ORDER BY name ASC")->fetchAll();
         $participants = array_map(function($r) {
             return [
@@ -516,8 +339,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ];
         }, $partRows);
 
-        // Fetch assignments
-        $asgnRows = $pdo->query("SELECT * FROM assignments ORDER BY date_str DESC")->fetchAll();
+        // Fetch assignments (PURE READ-ONLY)
+        $asgnRows = $pdo->query("SELECT * FROM assignments ORDER BY date_str DESC, id DESC")->fetchAll();
         $assignments = array_map(function($r) {
             return [
                 'id' => $r['id'],
@@ -531,7 +354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ];
         }, $asgnRows);
 
-        // Fetch scan logs
+        // Fetch scan logs (PURE READ-ONLY)
         $logRows = $pdo->query("SELECT * FROM scan_logs ORDER BY id DESC LIMIT 100")->fetchAll();
         $scanLogs = array_map(function($r) {
             return [
@@ -641,10 +464,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $sqlA = $isMySQL
                 ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
                    VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
-                   ON DUPLICATE KEY UPDATE seat_ids_json=VALUES(seat_ids_json), status=VALUES(status)"
+                   ON DUPLICATE KEY UPDATE seat_ids_json=VALUES(seat_ids_json), sent_to_email=VALUES(sent_to_email), status=VALUES(status)"
                 : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
                    VALUES (:id, :date_str, :participant_id, :participant_name, :seat_ids_json, :sent_to_email, :sent_by, :status)
-                   ON CONFLICT(id) DO UPDATE SET seat_ids_json=excluded.seat_ids_json, status=excluded.status";
+                   ON CONFLICT(id) DO UPDATE SET seat_ids_json=excluded.seat_ids_json, sent_to_email=excluded.sent_to_email, status=excluded.status";
 
             $stmtA = $pdo->prepare($sqlA);
             foreach ($incoming['assignments'] as $a) {
