@@ -48,6 +48,7 @@ export default function Home() {
 
   // Central Server Data Fetch & Real-Time Sync
   const fetchCentralData = useCallback(async () => {
+    if (isProcessing) return;
     try {
       const res = await fetch('/api/sync-data.php');
       if (res.ok) {
@@ -71,7 +72,7 @@ export default function Home() {
     } catch (e) {
       console.warn('Central server sync notice:', e);
     }
-  }, []);
+  }, [isProcessing]);
 
   // Post Data Updates to Central Server (Atomic Batch Update)
   const postCentralDataUpdate = async (updatePayload: {

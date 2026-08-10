@@ -371,6 +371,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         }
         $pdo->commit();
 
+        // EXPLICIT REPAIR FOR CASANDRA (SOLISTA) 5 SEATS (G20, H18, H19, H20, H21)
+        $casandraSolistaSeatIds = ["G20","H18","H19","H20","H21"];
+        $casandraSolistaJson = json_encode($casandraSolistaSeatIds);
+
+        $pdo->beginTransaction();
+        $sqlCasandra = $isMySQL
+            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-casandra-1', '10-08-26, 1:40 p. m.', 'part-12', 'Casandra (Solista)', '{$casandraSolistaJson}', 'mabel.parra.albarran@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON DUPLICATE KEY UPDATE seat_ids_json='{$casandraSolistaJson}', status='Enviado'"
+            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-casandra-1', '10-08-26, 1:40 p. m.', 'part-12', 'Casandra (Solista)', '{$casandraSolistaJson}', 'mabel.parra.albarran@gmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$casandraSolistaJson}', status='Enviado'";
+
+        $pdo->exec($sqlCasandra);
+
+        $stmtFixCasandra = $pdo->prepare("
+            UPDATE seats SET
+                status = 'sent',
+                assigned_participant_id = 'part-12',
+                assigned_participant_name = 'Casandra (Solista)'
+            WHERE id = :id
+        ");
+        foreach ($casandraSolistaSeatIds as $sId) {
+            $stmtFixCasandra->execute([':id' => $sId]);
+        }
+        $pdo->commit();
+
         // AUTO-REPAIR SEATS FROM ALL ASSIGNMENTS (in chronological order)
         $stmtAsgn = $pdo->query("SELECT * FROM assignments ORDER BY id ASC");
         $assignmentsRows = $stmtAsgn ? $stmtAsgn->fetchAll() : [];
