@@ -76,6 +76,22 @@ function getDBConnection() {
                 message TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+            CREATE TABLE IF NOT EXISTS resend_logs (
+                id VARCHAR(80) PRIMARY KEY,
+                assignment_id VARCHAR(80),
+                participant_name VARCHAR(255),
+                sent_to_email VARCHAR(255),
+                seat_ids_json TEXT,
+                pdf_count INT,
+                batch_count INT,
+                successful_batches INT,
+                result VARCHAR(20),
+                error_message TEXT,
+                sent_by VARCHAR(255),
+                timestamp_str VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         ");
 
         foreach (['school' => 'VARCHAR(255)', 'teacher' => 'VARCHAR(255)', 'instagram' => 'TEXT', 'facebook' => 'TEXT', 'tiktok' => 'TEXT'] as $col => $type) {
@@ -146,6 +162,22 @@ function getDBConnection() {
             participant_name TEXT,
             status TEXT,
             message TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS resend_logs (
+            id TEXT PRIMARY KEY,
+            assignment_id TEXT,
+            participant_name TEXT,
+            sent_to_email TEXT,
+            seat_ids_json TEXT,
+            pdf_count INTEGER,
+            batch_count INTEGER,
+            successful_batches INTEGER,
+            result TEXT,
+            error_message TEXT,
+            sent_by TEXT,
+            timestamp_str TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     ");
@@ -586,6 +618,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':message' => $l['message']
             ]);
         }
+
+        // Insert resend traceability log
+        if (isset($incoming['newResendLog']) && is_array($incoming['newResendLog'])) {
+            $rl = $incoming['newResendLog'];
+            $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+            $sqlRL = $isMySQL
+                ? "INSERT INTO resend_logs (id, assignment_id, participant_name, sent_to_email, seat_ids_json, pdf_count, batch_count, successful_batches, result, error_message, sent_by, timestamp_str)
+                   VALUES (:id, :assignment_id, :participant_name, :sent_to_email, :seat_ids_json, :pdf_count, :batch_count, :successful_batches, :result, :error_message, :sent_by, :timestamp_str)
+                   ON DUPLICATE KEY UPDATE result=VALUES(result), error_message=VALUES(error_message)"
+                : "INSERT INTO resend_logs (id, assignment_id, participant_name, sent_to_email, seat_ids_json, pdf_count, batch_count, successful_batches, result, error_message, sent_by, timestamp_str)
+                   VALUES (:id, :assignment_id, :participant_name, :sent_to_email, :seat_ids_json, :pdf_count, :batch_count, :successful_batches, :result, :error_message, :sent_by, :timestamp_str)
+                   ON CONFLICT(id) DO UPDATE SET result=excluded.result, error_message=excluded.error_message";
+
+            $stmtRL = $pdo->prepare($sqlRL);
+            $stmtRL->execute([
+                ':id'                  => $rl['id'],
+                ':assignment_id'       => $rl['assignmentId'],
+                ':participant_name'    => $rl['participantName'],
+                ':sent_to_email'       => $rl['sentToEmail'],
+                ':seat_ids_json'       => json_encode(isset($rl['seatIds']) ? $rl['seatIds'] : []),
+                ':pdf_count'           => (int)($rl['pdfCount'] ?? 0),
+                ':batch_count'         => (int)($rl['batchCount'] ?? 1),
+                ':successful_batches'  => (int)($rl['successfulBatches'] ?? 0),
+                ':result'              => $rl['result'] ?? 'unknown',
+                ':error_message'       => $rl['errorMessage'] ?? null,
+                ':sent_by'             => $rl['sentBy'] ?? 'Sistema',
+                ':timestamp_str'       => $rl['timestamp'] ?? date('c'),
+            ]);
+        }
+
 
         // Recalculate assigned_seats_count for all participants
         $pdo->exec("

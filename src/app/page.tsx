@@ -181,6 +181,153 @@ export default function Home() {
     setSelectedSeatIds([]);
   };
 
+  // ── Resend existing assignment (no mutations to seats/assignments) ────────
+  const handleResendAssignment = async (assignment: AssignmentRecord): Promise<{
+    success: boolean;
+    errorMessage?: string;
+  }> => {
+    // ── Guard: validate assignment has email and seats ──────────────────────
+    if (!assignment.sentToEmail || assignment.sentToEmail.trim() === '') {
+      return { success: false, errorMessage: 'La asignación no tiene correo registrado. Edítala antes de reenviar.' };
+    }
+    if (!assignment.seatIds || assignment.seatIds.length === 0) {
+      return { success: false, errorMessage: 'La asignación no tiene asientos asociados. No hay PDFs que generar.' };
+    }
+
+    const currentSenderName = user?.name || 'María Román';
+    const email = assignment.sentToEmail.trim();
+    const participantName = assignment.participantName;
+
+    // ── Look up full seat objects from current state ────────────────────────
+    const seatObjects = seats.filter((s) => assignment.seatIds.includes(s.id));
+    const missingSeats = assignment.seatIds.filter((id) => !seatObjects.find((s) => s.id === id));
+    if (missingSeats.length > 0) {
+      return {
+        success: false,
+        errorMessage: `No se encontraron los siguientes asientos en el sistema: ${missingSeats.join(', ')}. Recarga la página e intenta de nuevo.`,
+      };
+    }
+
+    // ── Find participant for PDF generation ────────────────────────────────
+    const participant = participants.find((p) => p.id === assignment.participantId);
+
+    // ── Generate PDFs — validate each one individually ──────────────────────
+    const generatedPDFs: Array<{ seat: Seat; pdfBlob: Blob; filename: string }> = [];
+    const failedSeats: string[] = [];
+
+    for (const seat of seatObjects) {
+      try {
+        const { pdfBlob, filename } = await generateTicketPDF(seat, participant);
+        if (!pdfBlob || pdfBlob.size < 100) {
+          failedSeats.push(seat.id);
+          continue;
+        }
+        generatedPDFs.push({ seat, pdfBlob, filename });
+      } catch {
+        failedSeats.push(seat.id);
+      }
+    }
+
+    if (failedSeats.length > 0) {
+      return {
+        success: false,
+        errorMessage: `No se pudo generar PDF para: ${failedSeats.join(', ')}. Intenta de nuevo.`,
+      };
+    }
+
+    // ── Build ticket payloads ───────────────────────────────────────────────
+    let allTicketPayloads;
+    try {
+      allTicketPayloads = await Promise.all(
+        generatedPDFs.map(async ({ seat, pdfBlob, filename }) => {
+          const arrayBuffer = await pdfBlob.arrayBuffer();
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          return {
+            row: seat.row,
+            number: seat.number,
+            filename,
+            ticketCode: seat.ticketCode,
+            pdfBase64: `data:application/pdf;base64,${base64}`,
+          };
+        })
+      );
+    } catch {
+      return { success: false, errorMessage: 'Error al codificar los PDFs en base64. Intenta de nuevo.' };
+    }
+
+    // ── Send in batches of 5 ────────────────────────────────────────────────
+    const BATCH_SIZE = 5;
+    const batches: typeof allTicketPayloads[] = [];
+    for (let i = 0; i < allTicketPayloads.length; i += BATCH_SIZE) {
+      batches.push(allTicketPayloads.slice(i, i + BATCH_SIZE));
+    }
+
+    let successfulBatches = 0;
+    let lastErrorMsg = '';
+
+    for (let idx = 0; idx < batches.length; idx++) {
+      try {
+        const phpRes = await fetch('/api/send-tickets.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipientEmail: email,
+            participantName,
+            seatTickets: batches[idx],
+            sentBy: currentSenderName,
+            batchIndex: idx + 1,
+            totalBatches: batches.length,
+            isResend: true,
+          }),
+        });
+        if (phpRes.ok) {
+          const json = await phpRes.json();
+          if (json.success) {
+            successfulBatches++;
+          } else {
+            lastErrorMsg = json.error || `El servidor rechazó el lote ${idx + 1}`;
+          }
+        } else {
+          lastErrorMsg = `El servidor respondió con error HTTP ${phpRes.status} en lote ${idx + 1}`;
+        }
+      } catch (e) {
+        lastErrorMsg = `Error de red al enviar lote ${idx + 1}: ${e instanceof Error ? e.message : 'desconocido'}`;
+      }
+    }
+
+    const resendSucceeded = successfulBatches === batches.length;
+
+    // ── Post traceability log to server (fire-and-forget) ──────────────────
+    const resendLog = {
+      id: `resend-${Date.now()}`,
+      assignmentId: assignment.id,
+      participantName,
+      sentToEmail: email,
+      seatIds: assignment.seatIds,
+      pdfCount: generatedPDFs.length,
+      batchCount: batches.length,
+      successfulBatches,
+      result: resendSucceeded ? 'success' : 'failed',
+      errorMessage: resendSucceeded ? null : lastErrorMsg,
+      sentBy: currentSenderName,
+      timestamp: new Date().toISOString(),
+    };
+    fetch('/api/sync-data.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newResendLog: resendLog }),
+    }).catch(() => {/* traceability is best-effort */});
+
+    if (!resendSucceeded) {
+      return {
+        success: false,
+        errorMessage: lastErrorMsg || `Solo ${successfulBatches} de ${batches.length} lotes enviados correctamente.`,
+      };
+    }
+
+    return { success: true };
+  };
+
   // Handle Seat Assignment and Email Dispatch
   const handleAssignAndSend = async (participantId: string, email: string, mode: 'send' | 'save') => {
     if (selectedSeatIds.length === 0) return;
@@ -548,7 +695,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <RecentAssignmentsTable assignments={assignments} />
+                <RecentAssignmentsTable assignments={assignments} onResend={handleResendAssignment} />
               </>
             )}
 
