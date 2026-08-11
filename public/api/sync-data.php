@@ -331,6 +331,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
             ) WHERE id = 'part-14'
         ");
 
+        // ONE-TIME MIGRATION FOR FESTIVAL RAKS EL HOB 8 SEATS (I14-I21)
+        $raksSeats = ["I14","I15","I16","I17","I18","I19","I20","I21"];
+        $raksJson = json_encode($raksSeats);
+        $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
+        $sqlRaks = $isMySQL
+            ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-raks-1', '10-08-26, 10:00 p. m.', 'part-15', 'Grupo Festival Raks El Hob', '{$raksJson}', 'priscillavelarde@hotmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON DUPLICATE KEY UPDATE seat_ids_json='{$raksJson}', status='Enviado'"
+            : "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
+               VALUES ('asgn-raks-1', '10-08-26, 10:00 p. m.', 'part-15', 'Grupo Festival Raks El Hob', '{$raksJson}', 'priscillavelarde@hotmail.com', 'Festival Danza del Vientre', 'Enviado')
+               ON CONFLICT(id) DO UPDATE SET seat_ids_json='{$raksJson}', status='Enviado'";
+        $pdo->exec($sqlRaks);
+
+        $stmtRaksSeats = $pdo->prepare("
+            UPDATE seats SET
+                status = 'sent',
+                assigned_participant_id = 'part-15',
+                assigned_participant_name = 'Grupo Festival Raks El Hob'
+            WHERE id = :id
+        ");
+        foreach ($raksSeats as $sId) {
+            $stmtRaksSeats->execute([':id' => $sId]);
+        }
+
+        $pdo->exec("
+            UPDATE participants SET assigned_seats_count = (
+                SELECT COUNT(*) FROM seats WHERE assigned_participant_id = 'part-15' AND status != 'available'
+            ) WHERE id = 'part-15'
+        ");
+
         // Fetch seats (PURE READ-ONLY)
         $seatRows = $pdo->query("SELECT * FROM seats ORDER BY row_name ASC, seat_number ASC")->fetchAll();
         $seats = array_map(function($r) {
@@ -431,8 +461,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pdo = getDBConnection();
         $pdo->beginTransaction();
 
-        // Update seats
-        if (isset($incoming['seats']) && is_array($incoming['seats'])) {
+        // --- DELTA UPDATE: Only changed seats (preferred, lightweight) ---
+        // Support for 'changedSeats' avoids sending all 544 seats on every assignment
+        $seatsToUpdate = [];
+        if (isset($incoming['changedSeats']) && is_array($incoming['changedSeats'])) {
+            $seatsToUpdate = $incoming['changedSeats'];
+        } else if (isset($incoming['seats']) && is_array($incoming['seats'])) {
+            // Legacy full-array fallback
+            $seatsToUpdate = $incoming['seats'];
+        }
+
+        if (!empty($seatsToUpdate)) {
             $stmtSeat = $pdo->prepare("
                 UPDATE seats SET
                     status = :status,
@@ -444,7 +483,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 WHERE id = :id
             ");
 
-            foreach ($incoming['seats'] as $s) {
+            foreach ($seatsToUpdate as $s) {
                 $stmtSeat->execute([
                     ':id' => $s['id'],
                     ':status' => $s['status'],
@@ -488,8 +527,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Update assignments
-        if (isset($incoming['assignments']) && is_array($incoming['assignments'])) {
+        // --- Single new assignment insert (preferred, lightweight) ---
+        // Support for 'newAssignment' avoids sending ALL historic assignments on every new one
+        $assignmentsToUpsert = [];
+        if (isset($incoming['newAssignment']) && is_array($incoming['newAssignment'])) {
+            $assignmentsToUpsert = [$incoming['newAssignment']];
+        } else if (isset($incoming['assignments']) && is_array($incoming['assignments'])) {
+            // Legacy full-array fallback
+            $assignmentsToUpsert = $incoming['assignments'];
+        }
+
+        if (!empty($assignmentsToUpsert)) {
             $isMySQL = defined('DB_TYPE') && DB_TYPE === 'mysql';
             $sqlA = $isMySQL
                 ? "INSERT INTO assignments (id, date_str, participant_id, participant_name, seat_ids_json, sent_to_email, sent_by, status)
@@ -500,7 +548,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    ON CONFLICT(id) DO UPDATE SET seat_ids_json=excluded.seat_ids_json, sent_to_email=excluded.sent_to_email, status=excluded.status";
 
             $stmtA = $pdo->prepare($sqlA);
-            foreach ($incoming['assignments'] as $a) {
+            foreach ($assignmentsToUpsert as $a) {
                 $stmtA->execute([
                     ':id' => $a['id'],
                     ':date_str' => isset($a['date']) ? $a['date'] : date('d/m/Y H:i'),

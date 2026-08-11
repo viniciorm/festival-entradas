@@ -75,23 +75,35 @@ export default function Home() {
     }
   }, []);
 
-  // Post Data Updates to Central Server (Atomic Batch Update)
+  // Post Data Updates to Central Server (Delta/Atomic Update with retry)
   const postCentralDataUpdate = async (updatePayload: {
-    seats?: Seat[];
+    changedSeats?: Seat[];       // Only the seats that changed (preferred)
+    seats?: Seat[];              // Legacy: full array fallback
     participants?: Participant[];
     assignments?: AssignmentRecord[];
+    newAssignment?: AssignmentRecord; // Only the new record (preferred)
     scanLogs?: ScanLogItem[];
     newScanLog?: ScanLogItem;
-  }) => {
-    try {
-      await fetch('/api/sync-data.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatePayload),
-      });
-    } catch (e) {
-      console.warn('Error pushing data to central server:', e);
+  }): Promise<boolean> => {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await fetch('/api/sync-data.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatePayload),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) return true;
+        }
+      } catch (e) {
+        console.warn(`Central server sync attempt ${attempt} failed:`, e);
+      }
+      if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 500 * attempt));
     }
+    console.error('All retries exhausted — assignment may not have saved to server');
+    return false;
   };
 
   // Initialize data on mount and set up real-time polling every 2 seconds
@@ -222,11 +234,19 @@ export default function Home() {
       saveParticipantsState(updatedParticipants, true);
       saveAssignmentsState(updatedAssignments, true);
 
-      await postCentralDataUpdate({
-        seats: updatedSeats,
+      // Use delta update: only send the changed seats and the new assignment record
+      // This reduces payload from ~300KB to ~2KB, preventing silent POST failures
+      const changedSeats = updatedSeats.filter((s) => selectedSeatIds.includes(s.id));
+      const saved = await postCentralDataUpdate({
+        changedSeats,
         participants: updatedParticipants,
-        assignments: updatedAssignments,
+        newAssignment: newRecord,
       });
+
+      if (!saved) {
+        // If delta failed, try once more with the new assignment only (minimum viable save)
+        await postCentralDataUpdate({ newAssignment: newRecord, changedSeats });
+      }
 
       // Clear selection right away so UI feels responsive
       const currentSelectedSeatIds = [...selectedSeatIds];
@@ -412,8 +432,9 @@ export default function Home() {
 
       // Mark seat checked_in in state
       const updatedSeats = seats.map((s) => (s.id === seatId ? { ...s, status: 'checked_in' as const, checkedInAt: new Date().toISOString() } : s));
+      const changedSeat = updatedSeats.find((s) => s.id === seatId);
       saveSeatsState(updatedSeats, true);
-      await postCentralDataUpdate({ seats: updatedSeats, newScanLog: newLog });
+      await postCentralDataUpdate({ changedSeats: changedSeat ? [changedSeat] : [], newScanLog: newLog });
     }
 
     const updatedLogs = [newLog, ...scanLogs];
