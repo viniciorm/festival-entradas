@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { Send, CheckCircle2, Clock, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { Send, CheckCircle2, Clock, AlertTriangle, Loader2, RefreshCw, FileDown } from 'lucide-react';
 import { AssignmentRecord } from '@/types/festival';
 
 interface ResendState {
@@ -12,6 +12,42 @@ interface ResendState {
 interface RecentAssignmentsTableProps {
   assignments: AssignmentRecord[];
   onResend?: (assignment: AssignmentRecord) => Promise<{ success: boolean; errorMessage?: string }>;
+}
+
+// Escape a cell value for CSV (wrap in quotes if it contains comma, quote, or newline)
+function csvCell(value: string | number): string {
+  const str = String(value ?? '');
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function exportToCSV(assignments: AssignmentRecord[]) {
+  const headers = ['Fecha', 'Participante', 'N° Entradas', 'Asientos', 'Email destinatario', 'Enviado por', 'Estado'];
+
+  const rows = assignments.map((a) => [
+    csvCell(a.date),
+    csvCell(a.participantName),
+    csvCell(a.seatIds.length),
+    csvCell(a.seatIds.join(' | ')),
+    csvCell(a.sentToEmail),
+    csvCell(a.sentBy),
+    csvCell(a.status),
+  ]);
+
+  // UTF-8 BOM ensures Excel opens accented characters correctly
+  const bom = '\uFEFF';
+  const csv = bom + [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const date = new Date().toLocaleDateString('es-CL').replace(/\//g, '-');
+  link.href = url;
+  link.download = `asignaciones-FDVC2026-${date}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function RecentAssignmentsTable({ assignments, onResend }: RecentAssignmentsTableProps) {
@@ -66,9 +102,20 @@ export default function RecentAssignmentsTable({ assignments, onResend }: Recent
           <h2 className="text-lg font-extrabold text-slate-900">Asignaciones recientes</h2>
           <p className="text-xs text-slate-500">Historial de entrega y envío de entradas a participantes</p>
         </div>
-        <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
-          Total: {assignments.length} registros
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportToCSV(assignments)}
+            disabled={assignments.length === 0}
+            title="Descargar lista de asignaciones en Excel"
+            className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <FileDown className="w-3.5 h-3.5" />
+            Exportar Excel
+          </button>
+          <span className="text-xs font-semibold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">
+            Total: {assignments.length} registros
+          </span>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
