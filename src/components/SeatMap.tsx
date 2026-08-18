@@ -31,7 +31,7 @@ export default function SeatMap({
     const isSelected = selectedSeatIds.includes(seat.id);
 
     if (isSelected) {
-      return 'bg-blue-600 text-white font-bold border-blue-700 shadow-md scale-110 ring-2 ring-blue-400 z-10';
+      return 'bg-emerald-500 text-white font-bold border-emerald-600 shadow-md scale-110 ring-2 ring-emerald-300 z-10';
     }
 
     switch (seat.status) {
@@ -63,7 +63,7 @@ export default function SeatMap({
             <span>Disponible</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3.5 h-3.5 rounded-full bg-blue-600 inline-block shadow-xs" />
+            <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 inline-block shadow-xs" />
             <span>Seleccionada</span>
           </div>
           <div className="flex items-center gap-1.5">
