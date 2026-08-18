@@ -14,6 +14,7 @@ import LoginModal from '@/components/LoginModal';
 import { useAuth } from '@/context/AuthContext';
 
 import { Seat, Participant, AssignmentRecord, FestivalStats } from '@/types/festival';
+import ParticipantSeatSummary from '@/components/ParticipantSeatSummary';
 import {
   generateInitialSeats,
   INITIAL_PARTICIPANTS,
@@ -694,6 +695,8 @@ export default function Home() {
                     />
                   </div>
                 </div>
+
+                <ParticipantSeatSummary participants={participants} seats={seats} />
 
                 <RecentAssignmentsTable assignments={assignments} onResend={handleResendAssignment} />
               </>
