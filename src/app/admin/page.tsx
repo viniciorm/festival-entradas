@@ -25,7 +25,7 @@ import { generateTicketPDF, downloadPDFBlob } from '@/utils/pdfGenerator';
 import { verifyTicketQRPayload } from '@/utils/security';
 import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Users, QrCode } from 'lucide-react';
 
-export default function Home() {
+export default function AdminPage() {
   const { user, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('tickets');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -594,21 +594,24 @@ export default function Home() {
 
   const selectedSeats = seats.filter((s) => selectedSeatIds.includes(s.id));
 
-  // If user authentication is still loading
-  if (isLoading) {
+  // ── Auth Guard: block ALL content until session is confirmed ──────────────
+  // isLoading = true during SSR hydration and localStorage read
+  // This prevents any flash of admin content before auth resolves
+  if (isLoading || !user) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-semibold tracking-wide">Cargando sistema de entradas...</p>
-        </div>
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        {isLoading ? (
+          // Loading state — dark overlay, no content visible
+          <div className="flex flex-col items-center gap-3 text-white">
+            <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm font-semibold tracking-wide text-slate-300">Verificando acceso...</p>
+          </div>
+        ) : (
+          // Not authenticated — show login modal over dark background
+          <LoginModal isOpen={true} />
+        )}
       </div>
     );
-  }
-
-  // Mandatory Login Gatekeeper
-  if (!user) {
-    return <LoginModal isOpen={true} />;
   }
 
   return (
