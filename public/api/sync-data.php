@@ -264,6 +264,36 @@ function getDefaultParticipants() {
 
 // Process GET Request: PURE READ-ONLY (No database mutations on GET!)
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+
+    // ── Public endpoint: ?public=1 ───────────────────────────────────────────
+    // Returns only available/occupied status — NO names, emails, types, or reasons.
+    if (isset($_GET['public']) && $_GET['public'] === '1') {
+        try {
+            $pdo = getDBConnection();
+            $rows = $pdo->query(
+                "SELECT id, row_name, seat_number, block, status FROM seats ORDER BY row_name, seat_number"
+            )->fetchAll(PDO::FETCH_ASSOC);
+
+            $publicSeats = array_map(function($s) {
+                return [
+                    'id'          => $s['id'],
+                    'row_name'    => $s['row_name'],
+                    'seat_number' => (int)$s['seat_number'],
+                    'block'       => $s['block'],
+                    // Sanitize: anything not 'available' becomes 'occupied'
+                    'status'      => ($s['status'] === 'available') ? 'available' : 'occupied',
+                ];
+            }, $rows);
+
+            echo json_encode(['seats' => $publicSeats, 'ts' => time()]);
+            exit(0);
+        } catch (Exception $e) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Could not load seat availability']);
+            exit(1);
+        }
+    }
+
     try {
         $pdo = getDBConnection();
 

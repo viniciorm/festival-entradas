@@ -1,731 +1,330 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import Sidebar from '@/components/Sidebar';
-import Header from '@/components/Header';
-import StatsCards from '@/components/StatsCards';
-import SeatMap from '@/components/SeatMap';
-import AssignmentPanel from '@/components/AssignmentPanel';
-import RecentAssignmentsTable from '@/components/RecentAssignmentsTable';
-import ParticipantsManager from '@/components/ParticipantsManager';
-import GateScanner, { ScanLogItem } from '@/components/GateScanner';
-import SettingsView from '@/components/SettingsView';
-import LoginModal from '@/components/LoginModal';
-import { useAuth } from '@/context/AuthContext';
+import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
+import { Armchair, Ticket, ShieldCheck, CalendarDays, MapPin, Clock, ChevronRight, Info } from 'lucide-react';
 
-import { Seat, Participant, AssignmentRecord, FestivalStats } from '@/types/festival';
-import ParticipantSeatSummary from '@/components/ParticipantSeatSummary';
-import {
-  generateInitialSeats,
-  INITIAL_PARTICIPANTS,
-  INITIAL_ASSIGNMENTS,
-  generateTicketCode,
-} from '@/utils/theater';
-import { generateTicketPDF, downloadPDFBlob } from '@/utils/pdfGenerator';
-import { verifyTicketQRPayload } from '@/utils/security';
-import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Users, QrCode } from 'lucide-react';
+// ─── Types ────────────────────────────────────────────────────────────────────
+type SeatStatus = 'available' | 'occupied';
+type SeatBlock = 'left' | 'center' | 'right';
 
-export default function Home() {
-  const { user, isLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<string>('tickets');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
-  const [seats, setSeats] = useState<Seat[]>([]);
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
-  const [scanLogs, setScanLogs] = useState<ScanLogItem[]>([]);
-  const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const isProcessingRef = useRef<boolean>(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+interface PublicSeat {
+  id: string;
+  row: string;
+  number: number;
+  block: SeatBlock;
+  status: SeatStatus; // only available or occupied shown to public
+}
 
-  // Phone Camera QR Scan Modal Result
-  const [urlScanResult, setUrlScanResult] = useState<{
-    isValid: boolean;
-    seatId?: string;
-    row?: string;
-    number?: number;
-    hash?: string;
-    message: string;
-  } | null>(null);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const TICKET_PRICE = 10000; // CLP – presale price
+const SERVICE_FEE_PCT = 0.04;
+const MAX_SEATS_PER_ORDER = 6;
 
-  // Central Server Data Fetch & Real-Time Sync
-  const fetchCentralData = useCallback(async () => {
-    if (isProcessingRef.current) return;
+function formatCLP(n: number) {
+  return `$${n.toLocaleString('es-CL')}`;
+}
+
+// ─── Seat block definitions (mirrors the actual theater layout) ───────────────
+const ROWS = ['A','B','C','D','E','F','G','H','I','J','K','L','M'];
+const ROW_SEATS: Record<string, number> = {
+  A:34, B:34, C:34, D:28, E:28, F:28, G:28,
+  H:28, I:28, J:28, K:28, L:28, M:28,
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
+export default function PublicTicketing() {
+  const [seats, setSeats] = useState<PublicSeat[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch public seat availability (only available/occupied — no names/types)
+  const fetchSeats = useCallback(async () => {
     try {
-      const res = await fetch('/api/sync-data.php');
-      if (res.ok) {
-        const json = await res.json();
-        if (json.seats && Array.isArray(json.seats) && json.seats.length > 0) {
-          setSeats(json.seats);
-          localStorage.setItem('fdvc_seats_2026', JSON.stringify(json.seats));
-        }
-        if (json.participants && Array.isArray(json.participants) && json.participants.length > 0) {
-          setParticipants(json.participants);
-          localStorage.setItem('fdvc_participants_2026', JSON.stringify(json.participants));
-        }
-        if (json.assignments && Array.isArray(json.assignments)) {
-          setAssignments(json.assignments);
-          localStorage.setItem('fdvc_assignments_2026', JSON.stringify(json.assignments));
-        }
-        if (json.scanLogs && Array.isArray(json.scanLogs)) {
-          setScanLogs(json.scanLogs);
+      const res = await fetch('/api/sync-data.php?public=1');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.seats)) {
+        const publicSeats: PublicSeat[] = data.seats.map((s: {
+          id: string; row_name: string; seat_number: number; block: SeatBlock; status: string;
+        }) => ({
+          id: s.id,
+          row: s.row_name,
+          number: s.seat_number,
+          block: s.block,
+          // All non-available statuses become "occupied" — no type info exposed
+          status: s.status === 'available' ? 'available' : 'occupied',
+        }));
+        setSeats(publicSeats);
+      }
+    } catch {
+      // On error, generate empty local seats (all available) so UI doesn't break
+      const fallback: PublicSeat[] = [];
+      for (const row of ROWS) {
+        for (let n = 1; n <= ROW_SEATS[row]; n++) {
+          fallback.push({
+            id: `${row}${n}`,
+            row,
+            number: n,
+            block: n <= 10 ? 'left' : n <= 24 ? 'center' : 'right',
+            status: 'available',
+          });
         }
       }
-    } catch (e) {
-      console.warn('Central server sync notice:', e);
+      setSeats(fallback);
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
-  // Post Data Updates to Central Server (Delta/Atomic Update with retry)
-  const postCentralDataUpdate = async (updatePayload: {
-    changedSeats?: Seat[];       // Only the seats that changed (preferred)
-    seats?: Seat[];              // Legacy: full array fallback
-    participants?: Participant[];
-    assignments?: AssignmentRecord[];
-    newAssignment?: AssignmentRecord; // Only the new record (preferred)
-    scanLogs?: ScanLogItem[];
-    newScanLog?: ScanLogItem;
-  }): Promise<boolean> => {
-    const MAX_RETRIES = 3;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        const res = await fetch('/api/sync-data.php', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updatePayload),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (json.success) return true;
-        }
-      } catch (e) {
-        console.warn(`Central server sync attempt ${attempt} failed:`, e);
-      }
-      if (attempt < MAX_RETRIES) await new Promise(r => setTimeout(r, 500 * attempt));
-    }
-    console.error('All retries exhausted — assignment may not have saved to server');
-    return false;
-  };
-
-  // Initialize data on mount and set up real-time polling every 2 seconds
   useEffect(() => {
-    fetchCentralData();
-    const interval = setInterval(fetchCentralData, 2000);
-
-    // Check for ?verify= URL parameter
-    if (typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      const verifyToken = urlParams.get('verify') || urlParams.get('v');
-
-      if (verifyToken) {
-        verifyTicketQRPayload(verifyToken).then((res) => {
-          if (res.isValid && res.data) {
-            setUrlScanResult({
-              isValid: true,
-              seatId: res.data.seatId,
-              row: res.data.row,
-              number: res.data.seatNumber,
-              hash: res.data.hash,
-              message: `✅ ENTRADA OFICIAL Y AUTÉNTICA — Fila ${res.data.row} Asiento ${res.data.seatNumber}`,
-            });
-          } else {
-            setUrlScanResult({
-              isValid: false,
-              message: res.reason || '⚠️ ALERTA DE SEGURIDAD: Código QR no válido o alterado.',
-            });
-          }
-        });
-      }
-    }
-
+    fetchSeats();
+    // Poll every 15 seconds so availability stays fresh
+    const interval = setInterval(fetchSeats, 15000);
     return () => clearInterval(interval);
-  }, [fetchCentralData]);
+  }, [fetchSeats]);
 
-  // Save state helpers with optional instant server push
-  const saveSeatsState = (newSeats: Seat[], skipPush = false) => {
-    setSeats(newSeats);
-    localStorage.setItem('fdvc_seats_2026', JSON.stringify(newSeats));
-    if (!skipPush) postCentralDataUpdate({ seats: newSeats });
+  const toggleSeat = (seat: PublicSeat) => {
+    if (seat.status === 'occupied') return;
+    setSelectedIds((prev) => {
+      if (prev.includes(seat.id)) return prev.filter((id) => id !== seat.id);
+      if (prev.length >= MAX_SEATS_PER_ORDER) return prev; // limit enforced
+      return [...prev, seat.id];
+    });
   };
 
-  const saveParticipantsState = (newParticipants: Participant[], skipPush = false) => {
-    setParticipants(newParticipants);
-    localStorage.setItem('fdvc_participants_2026', JSON.stringify(newParticipants));
-    if (!skipPush) postCentralDataUpdate({ participants: newParticipants });
+  // ─── Price calculation ───────────────────────────────────────────────────
+  const subtotal = selectedIds.length * TICKET_PRICE;
+  const serviceFee = Math.round(subtotal * SERVICE_FEE_PCT);
+  const total = subtotal + serviceFee;
+
+  // ─── Seat style helper (public: only green=available, gray=occupied) ─────
+  const getSeatClass = (seat: PublicSeat) => {
+    if (seat.status === 'occupied') {
+      return 'bg-slate-200 border-slate-300 cursor-not-allowed opacity-60';
+    }
+    if (selectedIds.includes(seat.id)) {
+      return 'bg-emerald-500 border-emerald-600 text-white ring-2 ring-emerald-300 scale-110 z-10 cursor-pointer';
+    }
+    return 'bg-purple-100 border-purple-200 text-purple-900 hover:bg-purple-300 hover:scale-105 cursor-pointer';
   };
 
-  const saveAssignmentsState = (newAssignments: AssignmentRecord[], skipPush = false) => {
-    setAssignments(newAssignments);
-    localStorage.setItem('fdvc_assignments_2026', JSON.stringify(newAssignments));
-    if (!skipPush) postCentralDataUpdate({ assignments: newAssignments });
-  };
-
-  // Calculate live stats
-  const stats: FestivalStats = React.useMemo(() => {
-    const totalSeats = seats.length || 544;
-    const assignedSeats = seats.filter((s) => s.status !== 'available').length;
-    const availableSeats = totalSeats - assignedSeats;
-    const sentToday = assignments.filter((a) => a.status === 'Enviado').length;
-    const checkedInCount = seats.filter((s) => s.status === 'checked_in').length;
-
-    return { totalSeats, assignedSeats, availableSeats, sentToday, checkedInCount };
-  }, [seats, assignments]);
-
-  // Toggle seat selection
-  const handleToggleSeat = (seatId: string) => {
-    setSelectedSeatIds((prev) =>
-      prev.includes(seatId) ? prev.filter((id) => id !== seatId) : [...prev, seatId]
-    );
-  };
-
-  const handleClearSelection = () => {
-    setSelectedSeatIds([]);
-  };
-
-  // ── Resend existing assignment (no mutations to seats/assignments) ────────
-  const handleResendAssignment = async (assignment: AssignmentRecord): Promise<{
-    success: boolean;
-    errorMessage?: string;
-  }> => {
-    // ── Guard: validate assignment has email and seats ──────────────────────
-    if (!assignment.sentToEmail || assignment.sentToEmail.trim() === '') {
-      return { success: false, errorMessage: 'La asignación no tiene correo registrado. Edítala antes de reenviar.' };
-    }
-    if (!assignment.seatIds || assignment.seatIds.length === 0) {
-      return { success: false, errorMessage: 'La asignación no tiene asientos asociados. No hay PDFs que generar.' };
-    }
-
-    const currentSenderName = user?.name || 'María Román';
-    const email = assignment.sentToEmail.trim();
-    const participantName = assignment.participantName;
-
-    // ── Look up full seat objects from current state ────────────────────────
-    const seatObjects = seats.filter((s) => assignment.seatIds.includes(s.id));
-    const missingSeats = assignment.seatIds.filter((id) => !seatObjects.find((s) => s.id === id));
-    if (missingSeats.length > 0) {
-      return {
-        success: false,
-        errorMessage: `No se encontraron los siguientes asientos en el sistema: ${missingSeats.join(', ')}. Recarga la página e intenta de nuevo.`,
-      };
-    }
-
-    // ── Find participant for PDF generation ────────────────────────────────
-    const participant = participants.find((p) => p.id === assignment.participantId);
-
-    // ── Generate PDFs — validate each one individually ──────────────────────
-    const generatedPDFs: Array<{ seat: Seat; pdfBlob: Blob; filename: string }> = [];
-    const failedSeats: string[] = [];
-
-    for (const seat of seatObjects) {
-      try {
-        const { pdfBlob, filename } = await generateTicketPDF(seat, participant);
-        if (!pdfBlob || pdfBlob.size < 100) {
-          failedSeats.push(seat.id);
-          continue;
-        }
-        generatedPDFs.push({ seat, pdfBlob, filename });
-      } catch {
-        failedSeats.push(seat.id);
-      }
-    }
-
-    if (failedSeats.length > 0) {
-      return {
-        success: false,
-        errorMessage: `No se pudo generar PDF para: ${failedSeats.join(', ')}. Intenta de nuevo.`,
-      };
-    }
-
-    // ── Build ticket payloads ───────────────────────────────────────────────
-    let allTicketPayloads;
-    try {
-      allTicketPayloads = await Promise.all(
-        generatedPDFs.map(async ({ seat, pdfBlob, filename }) => {
-          const arrayBuffer = await pdfBlob.arrayBuffer();
-          const base64 = Buffer.from(arrayBuffer).toString('base64');
-          return {
-            row: seat.row,
-            number: seat.number,
-            filename,
-            ticketCode: seat.ticketCode,
-            pdfBase64: `data:application/pdf;base64,${base64}`,
-          };
-        })
-      );
-    } catch {
-      return { success: false, errorMessage: 'Error al codificar los PDFs en base64. Intenta de nuevo.' };
-    }
-
-    // ── Send in batches of 5 ────────────────────────────────────────────────
-    const BATCH_SIZE = 5;
-    const batches: typeof allTicketPayloads[] = [];
-    for (let i = 0; i < allTicketPayloads.length; i += BATCH_SIZE) {
-      batches.push(allTicketPayloads.slice(i, i + BATCH_SIZE));
-    }
-
-    let successfulBatches = 0;
-    let lastErrorMsg = '';
-
-    for (let idx = 0; idx < batches.length; idx++) {
-      try {
-        const phpRes = await fetch('/api/send-tickets.php', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            recipientEmail: email,
-            participantName,
-            seatTickets: batches[idx],
-            sentBy: currentSenderName,
-            batchIndex: idx + 1,
-            totalBatches: batches.length,
-            isResend: true,
-          }),
-        });
-        if (phpRes.ok) {
-          const json = await phpRes.json();
-          if (json.success) {
-            successfulBatches++;
-          } else {
-            lastErrorMsg = json.error || `El servidor rechazó el lote ${idx + 1}`;
-          }
-        } else {
-          lastErrorMsg = `El servidor respondió con error HTTP ${phpRes.status} en lote ${idx + 1}`;
-        }
-      } catch (e) {
-        lastErrorMsg = `Error de red al enviar lote ${idx + 1}: ${e instanceof Error ? e.message : 'desconocido'}`;
-      }
-    }
-
-    const resendSucceeded = successfulBatches === batches.length;
-
-    // ── Post traceability log to server (fire-and-forget) ──────────────────
-    const resendLog = {
-      id: `resend-${Date.now()}`,
-      assignmentId: assignment.id,
-      participantName,
-      sentToEmail: email,
-      seatIds: assignment.seatIds,
-      pdfCount: generatedPDFs.length,
-      batchCount: batches.length,
-      successfulBatches,
-      result: resendSucceeded ? 'success' : 'failed',
-      errorMessage: resendSucceeded ? null : lastErrorMsg,
-      sentBy: currentSenderName,
-      timestamp: new Date().toISOString(),
-    };
-    fetch('/api/sync-data.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newResendLog: resendLog }),
-    }).catch(() => {/* traceability is best-effort */});
-
-    if (!resendSucceeded) {
-      return {
-        success: false,
-        errorMessage: lastErrorMsg || `Solo ${successfulBatches} de ${batches.length} lotes enviados correctamente.`,
-      };
-    }
-
-    return { success: true };
-  };
-
-  // Handle Seat Assignment and Email Dispatch
-  const handleAssignAndSend = async (participantId: string, email: string, mode: 'send' | 'save') => {
-    if (selectedSeatIds.length === 0) return;
-    setIsProcessing(true);
-    isProcessingRef.current = true;
-
-    try {
-      const participant = participants.find((p) => p.id === participantId);
-      const participantName = participant ? participant.name : 'Participante';
-      const currentSenderName = user?.name || 'María Román';
-
-      // Prepare updated seat state
-      const updatedSeats = seats.map((seat) => {
-        if (selectedSeatIds.includes(seat.id)) {
-          const tCode = generateTicketCode(seat.row, seat.number);
-          return {
-            ...seat,
-            status: (mode === 'send' ? 'sent' : 'assigned') as Seat['status'],
-            assignedParticipantId: participantId,
-            assignedParticipantName: participantName,
-            assignedAt: new Date().toISOString(),
-            ticketCode: tCode,
-            sentAt: mode === 'send' ? new Date().toISOString() : undefined,
-          };
-        }
-        return seat;
-      });
-
-      const updatedParticipants = participants.map((p) => {
-        if (p.id === participantId) {
-          return { ...p, assignedSeatsCount: p.assignedSeatsCount + selectedSeatIds.length };
-        }
-        return p;
-      });
-
-      // Create Assignment record
-      const newRecord: AssignmentRecord = {
-        id: `asgn-${Date.now()}`,
-        date: new Date().toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' }),
-        participantId: participantId,
-        participantName: participantName,
-        seatIds: [...selectedSeatIds],
-        sentToEmail: email,
-        sentBy: currentSenderName,
-        status: mode === 'send' ? 'Enviado' : 'Asignado',
-      };
-      const updatedAssignments = [newRecord, ...assignments];
-
-      // 1. UPDATE LOCAL STATE AND POST TO CENTRAL DATABASE IMMEDIATELY (<50ms)
-      saveSeatsState(updatedSeats, true);
-      saveParticipantsState(updatedParticipants, true);
-      saveAssignmentsState(updatedAssignments, true);
-
-      // Use delta update: only send the changed seats and the new assignment record
-      // This reduces payload from ~300KB to ~2KB, preventing silent POST failures
-      const changedSeats = updatedSeats.filter((s) => selectedSeatIds.includes(s.id));
-      const saved = await postCentralDataUpdate({
-        changedSeats,
-        participants: updatedParticipants,
-        newAssignment: newRecord,
-      });
-
-      if (!saved) {
-        // If delta failed, try once more with the new assignment only (minimum viable save)
-        await postCentralDataUpdate({ newAssignment: newRecord, changedSeats });
-      }
-
-      // Clear selection right away so UI feels responsive
-      const currentSelectedSeatIds = [...selectedSeatIds];
-      setSelectedSeatIds([]);
-
-      // 2. Generate PDFs for all selected seats
-      const selectedSeatObjects = updatedSeats.filter((s) => currentSelectedSeatIds.includes(s.id));
-      const generatedPDFs: Array<{ seat: Seat; pdfBlob: Blob; filename: string }> = [];
-
-      for (const seat of selectedSeatObjects) {
-        const { pdfBlob, filename } = await generateTicketPDF(seat, participant);
-        generatedPDFs.push({ seat, pdfBlob, filename });
-      }
-
-      let emailAttempted = false;
-      let totalEmailBatches = 1;
-
-      if (mode === 'send') {
-        try {
-          const allTicketPayloads = await Promise.all(
-            generatedPDFs.map(async ({ seat, pdfBlob, filename }) => {
-              const arrayBuffer = await pdfBlob.arrayBuffer();
-              const base64 = Buffer.from(arrayBuffer).toString('base64');
-              return {
-                row: seat.row,
-                number: seat.number,
-                filename: filename,
-                ticketCode: seat.ticketCode,
-                pdfBase64: `data:application/pdf;base64,${base64}`,
-              };
-            })
-          );
-
-          // Batch ticket payloads into chunks of maximum 5 tickets per email
-          const BATCH_SIZE = 5;
-          const batches = [];
-          for (let i = 0; i < allTicketPayloads.length; i += BATCH_SIZE) {
-            batches.push(allTicketPayloads.slice(i, i + BATCH_SIZE));
-          }
-          totalEmailBatches = batches.length;
-          let successfulBatches = 0;
-
-          for (let idx = 0; idx < batches.length; idx++) {
-            const chunk = batches[idx];
-            const phpRes = await fetch('/api/send-tickets.php', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                recipientEmail: email,
-                participantName: participantName,
-                seatTickets: chunk,
-                sentBy: currentSenderName,
-                batchIndex: idx + 1,
-                totalBatches: batches.length,
-              }),
-            });
-
-            if (phpRes.ok) {
-              const json = await phpRes.json();
-              if (json.success) {
-                successfulBatches++;
-              }
-            }
-          }
-
-          if (successfulBatches > 0) {
-            emailAttempted = true;
-          }
-        } catch (e) {
-          console.warn('Backend email dispatch notice:', e);
-        }
-
-        setToastMessage(
-          emailAttempted
-            ? `🚀 ${currentSelectedSeatIds.length} entradas enviadas a ${email} ${totalEmailBatches > 1 ? `en ${totalEmailBatches} correos` : ''} y PDFs descargados localmente`
-            : `✅ Entradas asignadas a ${participantName}. PDFs descargados para enviar a ${email}`
-        );
-
-        // Trigger local PDF downloads in background without blocking
-        setTimeout(() => {
-          try {
-            for (const { pdfBlob, filename } of generatedPDFs) {
-              downloadPDFBlob(pdfBlob, filename);
-            }
-          } catch (err) {
-            console.warn('PDF download notice:', err);
-          }
-        }, 100);
-      } else {
-        setToastMessage(`💾 ${currentSelectedSeatIds.length} butacas guardadas sin enviar`);
-      }
-    } catch (err) {
-      console.error('Error durante la asignación:', err);
-      setToastMessage('❌ Ocurrió un error al procesar la asignación');
-    } finally {
-      setIsProcessing(false);
-      isProcessingRef.current = false;
-      setTimeout(() => setToastMessage(null), 5000);
-    }
-  };
-
-  // Add new participant
-  const handleAddParticipant = (newP: Omit<Participant, 'id' | 'assignedSeatsCount'>) => {
-    const created: Participant = {
-      ...newP,
-      id: `part-${Date.now()}`,
-      assignedSeatsCount: 0,
-    };
-    const updated = [created, ...participants];
-    saveParticipantsState(updated);
-    setToastMessage(`✅ Participante "${created.name}" registrado con éxito`);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  // Bulk add participants from Excel/Paste
-  const handleBulkAddParticipants = (
-    newList: Omit<Participant, 'id' | 'assignedSeatsCount'>[]
-  ) => {
-    const created: Participant[] = newList.map((item, idx) => ({
-      ...item,
-      id: `part-${Date.now()}-${idx}`,
-      assignedSeatsCount: 0,
-    }));
-    const updated = [...created, ...participants];
-    saveParticipantsState(updated);
-    setToastMessage(`✅ ${created.length} participantes agregados masivamente`);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  // Delete participant
-  const handleDeleteParticipant = (id: string) => {
-    const p = participants.find((item) => item.id === id);
-    if (!p) return;
-    if (confirm(`¿Estás seguro de eliminar a "${p.name}"?`)) {
-      const updated = participants.filter((item) => item.id !== id);
-      saveParticipantsState(updated);
-      setToastMessage(`🗑️ Participante "${p.name}" eliminado`);
-      setTimeout(() => setToastMessage(null), 3000);
-    }
-  };
-
-  // Gate Check-in Validation & Recording
-  const handleCheckInSeat = async (seatId: string) => {
-    const targetSeat = seats.find((s) => s.id === seatId);
-    if (!targetSeat) return;
-
-    const timeNow = new Date().toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
-    let newLog: ScanLogItem;
-
-    if (targetSeat.status === 'checked_in') {
-      newLog = {
-        id: `scan-${Date.now()}`,
-        time: timeNow,
-        seatId: targetSeat.id,
-        row: targetSeat.row,
-        number: targetSeat.number,
-        participantName: targetSeat.assignedParticipantName || 'Sin Nombre',
-        status: 'already_used',
-        message: '¡ALERTA! Entrada ya fue ingresada anteriormente en puerta',
-      };
-    } else if (targetSeat.status === 'available') {
-      newLog = {
-        id: `scan-${Date.now()}`,
-        time: timeNow,
-        seatId: targetSeat.id,
-        row: targetSeat.row,
-        number: targetSeat.number,
-        participantName: 'Sin Asignar',
-        status: 'fake',
-        message: 'Butaca no asignada ni emitida en sistema',
-      };
-    } else {
-      newLog = {
-        id: `scan-${Date.now()}`,
-        time: timeNow,
-        seatId: targetSeat.id,
-        row: targetSeat.row,
-        number: targetSeat.number,
-        participantName: targetSeat.assignedParticipantName || 'Participante',
-        status: 'valid',
-        message: 'Acceso Permitido — Entrada Validada OK',
-      };
-
-      // Mark seat checked_in in state
-      const updatedSeats = seats.map((s) => (s.id === seatId ? { ...s, status: 'checked_in' as const, checkedInAt: new Date().toISOString() } : s));
-      const changedSeat = updatedSeats.find((s) => s.id === seatId);
-      saveSeatsState(updatedSeats, true);
-      await postCentralDataUpdate({ changedSeats: changedSeat ? [changedSeat] : [], newScanLog: newLog });
-    }
-
-    const updatedLogs = [newLog, ...scanLogs];
-    setScanLogs(updatedLogs);
-    if (targetSeat.status !== 'checked_in' && targetSeat.status !== 'available') {
-      saveSeatsState(seats.map((s) => (s.id === seatId ? { ...s, status: 'checked_in' as const } : s)));
-    }
-  };
-
-  const selectedSeats = seats.filter((s) => selectedSeatIds.includes(s.id));
-
-  // If user authentication is still loading
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm font-semibold tracking-wide">Cargando sistema de entradas...</p>
-        </div>
-      </div>
-    );
-  }
-
-  // Mandatory Login Gatekeeper
-  if (!user) {
-    return <LoginModal isOpen={true} />;
-  }
+  // ─── Group seats by row ──────────────────────────────────────────────────
+  const seatsByRow = ROWS.reduce<Record<string, PublicSeat[]>>((acc, row) => {
+    acc[row] = seats.filter((s) => s.row === row);
+    return acc;
+  }, {});
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 animate-bounce flex items-center gap-2">
-          <span>{toastMessage}</span>
-        </div>
-      )}
+    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-indigo-950 to-purple-950 text-white">
 
-      {/* Camera Scan Result Modal overlay */}
-      {urlScanResult && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 text-center">
-            {urlScanResult.isValid ? (
-              <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto animate-pulse" />
-            ) : (
-              <AlertTriangle className="w-16 h-16 text-red-500 mx-auto" />
-            )}
+      {/* ── Hero Header ──────────────────────────────────────────────────── */}
+      <header className="relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-amber-500/10 to-purple-500/10" />
+        <div className="relative max-w-6xl mx-auto px-4 py-10 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div>
+            <p className="text-amber-400 text-xs font-bold uppercase tracking-widest mb-1">Ticketera Oficial</p>
+            <h1 className="text-3xl md:text-4xl font-black text-white leading-tight">
+              Festival Nacional<br />
+              <span className="text-amber-400">Danza del Vientre</span>
+            </h1>
+            <p className="text-indigo-200 text-sm font-semibold mt-2">Chile 2026</p>
+          </div>
 
-            <h3 className="text-xl font-extrabold text-slate-900">{urlScanResult.isValid ? 'Entrada Válida' : 'Verificación Fallida'}</h3>
-            <p className="text-xs text-slate-600 font-medium leading-relaxed">{urlScanResult.message}</p>
-
-            <button
-              onClick={() => {
-                setUrlScanResult(null);
-                if (typeof window !== 'undefined') {
-                  const url = new URL(window.location.href);
-                  url.searchParams.delete('verify');
-                  url.searchParams.delete('v');
-                  window.history.replaceState({}, '', url.toString());
-                }
-              }}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md cursor-pointer"
-            >
-              Cerrar y Continuar
-            </button>
+          {/* Event info pills */}
+          <div className="flex flex-col gap-2 text-sm">
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur px-4 py-2 rounded-xl">
+              <CalendarDays className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="font-semibold">Viernes 5 de Septiembre 2026</span>
+            </div>
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur px-4 py-2 rounded-xl">
+              <MapPin className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="font-semibold">Teatro Municipal de Santiago</span>
+            </div>
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur px-4 py-2 rounded-xl">
+              <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="font-semibold">20:00 hrs — Puertas abren 19:30</span>
+            </div>
           </div>
         </div>
-      )}
+      </header>
 
-      {/* Main Layout Grid */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Navigation Sidebar */}
-        <Sidebar
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          isMobileOpen={isMobileMenuOpen}
-          onCloseMobile={() => setIsMobileMenuOpen(false)}
-        />
-
-        {/* Content Container */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-          {/* Header Bar */}
-          <Header
-            onToggleMobileMenu={() => setIsMobileMenuOpen((prev) => !prev)}
-          />
-
-          {/* Body Content by Active Tab */}
-          <main className="flex-1 p-4 md:p-8 space-y-8 max-w-7xl w-full mx-auto">
-            {/* Top Dashboard Metrics */}
-            <StatsCards stats={stats} />
-
-            {/* TAB: Entradas / Dashboard Principal */}
-            {(activeTab === 'tickets' || activeTab === 'overview') && (
-              <>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                  <div className="lg:col-span-2">
-                    <SeatMap
-                      seats={seats}
-                      selectedSeatIds={selectedSeatIds}
-                      onToggleSeat={handleToggleSeat}
-                      onClearSelection={handleClearSelection}
-                    />
-                  </div>
-
-                  <div className="lg:col-span-1">
-                    <AssignmentPanel
-                      selectedSeats={selectedSeats}
-                      participants={participants}
-                      onAssignAndSend={handleAssignAndSend}
-                      isProcessing={isProcessing}
-                    />
-                  </div>
-                </div>
-
-                <ParticipantSeatSummary participants={participants} seats={seats} />
-
-                <RecentAssignmentsTable assignments={assignments} onResend={handleResendAssignment} />
-              </>
-            )}
-
-            {/* TAB: Participantes / Escuelas */}
-            {activeTab === 'participants' && (
-              <ParticipantsManager
-                participants={participants}
-                onAddParticipant={handleAddParticipant}
-                onDeleteParticipant={handleDeleteParticipant}
-                onBulkAddParticipants={handleBulkAddParticipants}
-              />
-            )}
-
-            {/* TAB: Control de Acceso y QR */}
-            {activeTab === 'scanner' && (
-              <GateScanner
-                seats={seats}
-                scanLogs={scanLogs}
-                onCheckInSeat={handleCheckInSeat}
-              />
-            )}
-
-            {/* TAB: Configuración */}
-            {activeTab === 'settings' && <SettingsView />}
-          </main>
+      {/* ── Price Banner ─────────────────────────────────────────────────── */}
+      <div className="bg-amber-500/20 border-y border-amber-500/30 py-3">
+        <div className="max-w-6xl mx-auto px-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Ticket className="w-5 h-5 text-amber-400" />
+            <span className="text-sm font-bold text-amber-200">
+              Preventa: <span className="text-white text-base">{formatCLP(TICKET_PRICE)}</span>
+              <span className="text-amber-400/70 text-xs ml-2">(hasta el 4 de septiembre)</span>
+            </span>
+          </div>
+          <span className="text-xs text-amber-300/80 font-semibold flex items-center gap-1">
+            <Info className="w-3.5 h-3.5" />
+            Precio en puerta: {formatCLP(12000)} el día del evento
+          </span>
         </div>
       </div>
+
+      {/* ── Main Grid ────────────────────────────────────────────────────── */}
+      <main className="max-w-6xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+        {/* ── Seat Map ─────────────────────────────────────────────────── */}
+        <div className="lg:col-span-2">
+          <div className="bg-white/5 backdrop-blur rounded-2xl p-5 border border-white/10">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-extrabold text-white flex items-center gap-2">
+                <Armchair className="w-5 h-5 text-indigo-400" />
+                Selecciona tus butacas
+              </h2>
+              <div className="flex items-center gap-3 text-xs font-semibold">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-purple-300 inline-block" /> Libre
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-emerald-500 inline-block" /> Seleccionada
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" /> Ocupado
+                </span>
+              </div>
+            </div>
+
+            {/* Stage */}
+            <div className="w-full bg-slate-700/50 border border-slate-500/30 rounded-xl py-2 text-center text-xs font-bold text-slate-400 tracking-widest uppercase mb-5">
+              🎭 Escenario
+            </div>
+
+            {isLoading ? (
+              <div className="flex items-center justify-center h-48 gap-3 text-indigo-300">
+                <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                <span className="text-sm font-semibold">Cargando disponibilidad...</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5 overflow-x-auto pb-2">
+                {ROWS.map((row) => (
+                  <div key={row} className="flex items-center gap-1.5 min-w-max">
+                    <span className="text-[10px] font-bold text-slate-400 w-4 text-center shrink-0">{row}</span>
+                    <div className="flex gap-0.5 flex-wrap">
+                      {(seatsByRow[row] ?? []).map((seat) => (
+                        <button
+                          key={seat.id}
+                          onClick={() => toggleSeat(seat)}
+                          disabled={seat.status === 'occupied'}
+                          title={seat.status === 'occupied' ? 'Ocupado' : `Fila ${seat.row} N° ${seat.number}`}
+                          className={`w-6 h-6 text-[9px] font-bold rounded-sm border transition-all duration-100 ${getSeatClass(seat)}`}
+                        >
+                          {seat.number}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {selectedIds.length >= MAX_SEATS_PER_ORDER && (
+              <p className="mt-3 text-xs text-amber-300 font-semibold text-center">
+                Máximo {MAX_SEATS_PER_ORDER} entradas por compra
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* ── Order Summary + CTA ──────────────────────────────────────── */}
+        <div className="lg:col-span-1 space-y-4">
+
+          {/* Selected seats */}
+          <div className="bg-white/5 backdrop-blur rounded-2xl p-5 border border-white/10">
+            <h3 className="text-sm font-extrabold text-white mb-3 flex items-center gap-2">
+              <Ticket className="w-4 h-4 text-amber-400" />
+              Tu selección
+            </h3>
+
+            {selectedIds.length === 0 ? (
+              <p className="text-xs text-slate-400 italic text-center py-4">
+                Haz clic en las butacas del mapa para elegir tu lugar
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {selectedIds.map((id) => (
+                  <button
+                    key={id}
+                    onClick={() => setSelectedIds((prev) => prev.filter((s) => s !== id))}
+                    className="px-2 py-1 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-xs rounded-lg hover:bg-red-500/20 hover:border-red-400/40 hover:text-red-300 transition-colors"
+                    title="Quitar"
+                  >
+                    {id} ×
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Price breakdown */}
+            {selectedIds.length > 0 && (
+              <div className="border-t border-white/10 pt-3 space-y-1.5 text-xs">
+                <div className="flex justify-between text-slate-300">
+                  <span>{selectedIds.length} entrada{selectedIds.length > 1 ? 's' : ''} × {formatCLP(TICKET_PRICE)}</span>
+                  <span className="font-semibold">{formatCLP(subtotal)}</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>Cargo por servicio (4%)</span>
+                  <span>+{formatCLP(serviceFee)}</span>
+                </div>
+                <div className="flex justify-between font-black text-white text-sm border-t border-white/10 pt-2 mt-1">
+                  <span>TOTAL</span>
+                  <span className="text-amber-400">{formatCLP(total)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Checkout CTA */}
+          <Link
+            href={selectedIds.length > 0
+              ? `/checkout?seats=${selectedIds.join(',')}`
+              : '#'}
+            onClick={(e) => selectedIds.length === 0 && e.preventDefault()}
+            className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-sm transition-all shadow-lg
+              ${selectedIds.length > 0
+                ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-indigo-500/30 cursor-pointer'
+                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+              }`}
+          >
+            {selectedIds.length > 0 ? (
+              <>Continuar al pago <ChevronRight className="w-4 h-4" /></>
+            ) : (
+              'Selecciona al menos 1 butaca'
+            )}
+          </Link>
+
+          {/* Trust badges */}
+          <div className="bg-white/5 rounded-2xl p-4 border border-white/10 space-y-2">
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Pago seguro con <strong className="text-white">Webpay / Transbank</strong></span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <Ticket className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>Entradas digitales enviadas a tu correo</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>QR único e intransferible por asiento</span>
+            </div>
+          </div>
+
+          {/* Admin link (discreet) */}
+          <div className="text-center">
+            <Link
+              href="/admin"
+              className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors font-semibold"
+            >
+              Acceso administración
+            </Link>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
