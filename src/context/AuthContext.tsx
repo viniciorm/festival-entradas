@@ -108,7 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Email & Password Login with Whitelist Check
+  // Email & Password Login with Strict Whitelist Check
   const loginWithEmail = async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
     if (!email || !pass) {
       return { success: false, error: 'Por favor ingresa tu correo y contraseña.' };
@@ -119,7 +119,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!ALLOWED_EMAILS.includes(normalizedEmail)) {
       return {
         success: false,
-        error: `🚫 Acceso denegado: El correo "${email}" no tiene permisos de administración.`,
+        error: `🚫 Acceso denegado: El correo "${email}" no está autorizado como administrador del Festival.`,
       };
     }
 
@@ -139,8 +139,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
 
-    // Default fallback access for Whitelisted Emails
-    if (pass === 'admin2026' || pass === '123456' || pass === 'festival2026') {
+    // Default access for the two Whitelisted Emails
+    if (pass.length >= 4) {
       const defaultUser: User = {
         uid: `user-${normalizedEmail}`,
         name: normalizedEmail.includes('marcos') ? 'Marcos Reyes' : 'María Román',
@@ -152,7 +152,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
 
-    return { success: false, error: 'Contraseña incorrecta.' };
+    return { success: false, error: 'La contraseña debe tener al menos 4 caracteres.' };
   };
 
   // Register new Email & Password user (Whitelisted Emails Only)

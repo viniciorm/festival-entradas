@@ -7,18 +7,23 @@ import { Participant, Seat } from '@/types/festival';
 interface ParticipantSeatSummaryProps {
   participants: Participant[];
   seats: Seat[];
+  onOpenUnassign?: (participant: Participant) => void;
 }
 
-export default function ParticipantSeatSummary({ participants, seats }: ParticipantSeatSummaryProps) {
+export default function ParticipantSeatSummary({
+  participants,
+  seats,
+  onOpenUnassign,
+}: ParticipantSeatSummaryProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
   // Compute per-participant seat counts live from seats table (source of truth)
   const summary = useMemo(() => {
-    return participants
+    return (participants || [])
       .map((p) => {
-        const participantSeats = seats.filter((s) => s.assignedParticipantId === p.id);
-        const sent = participantSeats.filter((s) => s.status === 'sent' || s.status === 'checked_in').length;
-        const assigned = participantSeats.filter((s) => s.status === 'assigned').length;
+        const participantSeats = (seats || []).filter((s) => s && s.assignedParticipantId === p.id);
+        const sent = participantSeats.filter((s) => s && (s.status === 'sent' || s.status === 'checked_in')).length;
+        const assigned = participantSeats.filter((s) => s && s.status === 'assigned').length;
         const total = participantSeats.length;
         return { ...p, sentCount: sent, assignedCount: assigned, totalCount: total };
       })

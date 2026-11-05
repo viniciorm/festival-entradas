@@ -50,8 +50,17 @@ async function deployPureRoot() {
     dbContent = dbContent.replace(/define\('DB_NAME', '[^']*'\);/, `define('DB_NAME', '${mysqlDb}');`);
     dbContent = dbContent.replace(/define\('DB_USER', '[^']*'\);/, `define('DB_USER', '${mysqlUser}');`);
     dbContent = dbContent.replace(/define\('DB_PASS', '[^']*'\);/, `define('DB_PASS', '${mysqlPass}');`);
+
+    const googleClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || '628041817016-i3519nl5kh7cfdfcio1jene9qkdqplh4.apps.googleusercontent.com';
+    const googleClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
+    const googleRedirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI || 'https://ticketfestival.tupartnerti.cl/api/auth/google/callback.php';
+
+    dbContent = dbContent.replace(/define\('GOOGLE_OAUTH_CLIENT_ID', [^;]*\);/, `define('GOOGLE_OAUTH_CLIENT_ID', '${googleClientId}');`);
+    dbContent = dbContent.replace(/define\('GOOGLE_OAUTH_CLIENT_SECRET', [^;]*\);/, `define('GOOGLE_OAUTH_CLIENT_SECRET', '${googleClientSecret}');`);
+    dbContent = dbContent.replace(/define\('GOOGLE_OAUTH_REDIRECT_URI', [^;]*\);/, `define('GOOGLE_OAUTH_REDIRECT_URI', '${googleRedirectUri}');`);
+
     fs.writeFileSync(dbConfigPath, dbContent, 'utf8');
-    console.log(`[PURE ROOT DEPLOY] 🔒 Injected MySQL credentials for database "${mysqlDb}" into db_config.php.`);
+    console.log(`[PURE ROOT DEPLOY] 🔒 Injected MySQL and Google OAuth credentials into db_config.php.`);
   }
 
   try {
@@ -60,7 +69,8 @@ async function deployPureRoot() {
       user,
       password,
       port,
-      secure: false,
+      secure: true,
+      secureOptions: { rejectUnauthorized: false },
     });
 
     console.log('[PURE ROOT DEPLOY] ✅ FTP Connected.');
@@ -93,9 +103,30 @@ DirectoryIndex index.html
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
+
+  <IfModule mod_dir.c>
+    DirectorySlash Off
+  </IfModule>
+
+  # 1. Internal rewrite for explicit routes (0 redirects, clean URL)
+  RewriteRule ^admin/?$ admin.html [QSA,L]
+  RewriteRule ^puerta/?$ puerta.html [QSA,L]
+  RewriteRule ^mis-entradas/?$ mis-entradas.html [QSA,L]
+  RewriteRule ^checkout/?$ checkout.html [QSA,L]
+
+  # 2. Direct rewrite if matching .html file exists in filesystem
+  RewriteCond %{DOCUMENT_ROOT}/$1.html -f
+  RewriteRule ^(.*)$ $1.html [QSA,L]
+
+  # 3. Do not rewrite existing files, directories or API endpoints
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # 4. Clean HTTP 302 Redirect for any unknown non-existing route back to home "/"
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
-  RewriteRule ^(.*)$ index.html [L]
+  RewriteRule ^(.*)$ / [R=302,L]
 </IfModule>`;
 
     fs.writeFileSync(htaccessPath, htaccessContent);
@@ -104,10 +135,6 @@ DirectoryIndex index.html
     console.log('[PURE ROOT DEPLOY] Uploading build files to FTP root "/"...');
     await client.ensureDir('/');
     await client.uploadFromDir(localDir);
-
-    // 4. Set CHMOD 755 for directories and 644 for files
-    console.log('[PURE ROOT DEPLOY] Setting CHMOD 755 for directories and 644 for files...');
-    await chmodRecursive(client, '/');
 
     console.log('[PURE ROOT DEPLOY] 🎉 PURE ROOT DEPLOYMENT COMPLETED SUCCESSFULLY!');
     console.log(`[PURE ROOT DEPLOY] Live URL: https://ticketfestival.tupartnerti.cl`);

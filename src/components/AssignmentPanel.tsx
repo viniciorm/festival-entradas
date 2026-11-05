@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Send, Download, Save, Mail, User, Ticket, Loader2, Eye, X, FileCheck } from 'lucide-react';
+import { Send, Download, Save, Mail, User, Ticket, Loader2, Eye, X, FileCheck, Unlock, AlertTriangle } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Seat, Participant } from '@/types/festival';
 import { generateTicketPDF, downloadPDFBlob } from '@/utils/pdfGenerator';
@@ -10,6 +10,7 @@ interface AssignmentPanelProps {
   selectedSeats: Seat[];
   participants: Participant[];
   onAssignAndSend: (participantId: string, email: string, mode: 'send' | 'save') => Promise<void>;
+  onUnassignSelectedSeats?: (seatIds: string[]) => Promise<void>;
   isProcessing?: boolean;
 }
 
@@ -17,6 +18,7 @@ export default function AssignmentPanel({
   selectedSeats,
   participants,
   onAssignAndSend,
+  onUnassignSelectedSeats,
   isProcessing = false,
 }: AssignmentPanelProps) {
   const [selectedParticipantId, setSelectedParticipantId] = useState<string>(participants[0]?.id || '');
@@ -31,6 +33,7 @@ export default function AssignmentPanel({
   const [isGeneratingPreview, setIsGeneratingPreview] = useState<boolean>(false);
 
   const selectedParticipant = participants.find((p) => p.id === selectedParticipantId);
+  const assignedSeats = selectedSeats.filter((s) => s.status !== 'available');
 
   // Update email when selected participant changes
   useEffect(() => {
@@ -123,7 +126,7 @@ export default function AssignmentPanel({
               onChange={(e) => setSelectedParticipantId(e.target.value)}
               className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs font-semibold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all outline-none"
             >
-              {participants.map((p) => (
+              {(participants || []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} — {p.dancersCount} {p.dancersCount === 1 ? 'bailarina' : 'bailarinas'} ({p.type})
                 </option>
@@ -154,6 +157,27 @@ export default function AssignmentPanel({
                 <span className="text-xs text-slate-400 italic">Haz clic en las butacas del mapa para seleccionar</span>
               )}
             </div>
+
+            {assignedSeats.length > 0 && onUnassignSelectedSeats && (
+              <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-900 font-semibold leading-snug">
+                    {assignedSeats.length} de las butacas seleccionadas ya están asignadas{' '}
+                    {assignedSeats[0].assignedParticipantName ? `a "${assignedSeats[0].assignedParticipantName}"` : ''}.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onUnassignSelectedSeats(assignedSeats.map((s) => s.id))}
+                  disabled={isProcessing}
+                  className="w-full bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs py-2 px-3 rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  Desasignar y liberar {assignedSeats.length} butaca(s)
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Email Address */}

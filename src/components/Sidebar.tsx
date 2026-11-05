@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Home, Users, Ticket, QrCode, Settings, Sparkles, X } from 'lucide-react';
+import { Home, Users, Ticket, QrCode, Settings, Sparkles, X, Mail, Percent, Ban, CreditCard } from 'lucide-react';
 
 interface SidebarProps {
   activeTab: string;
@@ -17,9 +17,13 @@ export default function Sidebar({
   onCloseMobile,
 }: SidebarProps) {
   const navItems = [
-    { id: 'tickets', label: 'Entradas', icon: Ticket },
     { id: 'dashboard', label: 'Resumen', icon: Home },
+    { id: 'orders', label: 'Compras y Webpay', icon: CreditCard },
+    { id: 'tickets', label: 'Entradas', icon: Ticket },
     { id: 'participants', label: 'Participantes', icon: Users },
+    { id: 'invitations', label: 'Invitaciones', icon: Mail },
+    { id: 'blocked-seats', label: 'Butacas No Disponibles', icon: Ban },
+    { id: 'discounts', label: 'Descuentos', icon: Percent },
     { id: 'scanner', label: 'Acceso y QR', icon: QrCode },
     { id: 'settings', label: 'Configuración', icon: Settings },
   ];

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { Send, CheckCircle2, Clock, AlertTriangle, Loader2, RefreshCw, FileDown } from 'lucide-react';
+import { Send, CheckCircle2, Clock, AlertTriangle, Loader2, RefreshCw, FileDown, Unlock, X } from 'lucide-react';
 import { AssignmentRecord } from '@/types/festival';
 
 interface ResendState {
@@ -12,6 +12,7 @@ interface ResendState {
 interface RecentAssignmentsTableProps {
   assignments: AssignmentRecord[];
   onResend?: (assignment: AssignmentRecord) => Promise<{ success: boolean; errorMessage?: string }>;
+  onUnassignAssignment?: (assignment: AssignmentRecord) => Promise<void>;
 }
 
 // Escape a cell value for CSV (wrap in quotes if it contains comma, quote, or newline)
@@ -26,15 +27,18 @@ function csvCell(value: string | number): string {
 function exportToCSV(assignments: AssignmentRecord[]) {
   const headers = ['Fecha', 'Participante', 'N° Entradas', 'Asientos', 'Email destinatario', 'Enviado por', 'Estado'];
 
-  const rows = assignments.map((a) => [
-    csvCell(a.date),
-    csvCell(a.participantName),
-    csvCell(a.seatIds.length),
-    csvCell(a.seatIds.join(' | ')),
-    csvCell(a.sentToEmail),
-    csvCell(a.sentBy),
-    csvCell(a.status),
-  ]);
+  const rows = (assignments || []).map((a) => {
+    const seatIds = Array.isArray(a.seatIds) ? a.seatIds : [];
+    return [
+      csvCell(a.date),
+      csvCell(a.participantName),
+      csvCell(seatIds.length),
+      csvCell(seatIds.join(' | ')),
+      csvCell(a.sentToEmail),
+      csvCell(a.sentBy),
+      csvCell(a.status),
+    ];
+  });
 
   // UTF-8 BOM ensures Excel opens accented characters correctly
   const bom = '\uFEFF';
@@ -50,9 +54,16 @@ function exportToCSV(assignments: AssignmentRecord[]) {
   URL.revokeObjectURL(url);
 }
 
-export default function RecentAssignmentsTable({ assignments, onResend }: RecentAssignmentsTableProps) {
+export default function RecentAssignmentsTable({
+  assignments,
+  onResend,
+  onUnassignAssignment,
+}: RecentAssignmentsTableProps) {
   // Per-row resend state keyed by assignment.id
   const [resendStates, setResendStates] = useState<Record<string, ResendState>>({});
+  const [confirmingUnassign, setConfirmingUnassign] = useState<AssignmentRecord | null>(null);
+  const [isUnassigning, setIsUnassigning] = useState(false);
+  const [unassignError, setUnassignError] = useState<string | null>(null);
 
   const getResendState = (id: string): ResendState => resendStates[id] ?? { status: 'idle' };
 
@@ -142,7 +153,7 @@ export default function RecentAssignmentsTable({ assignments, onResend }: Recent
                       <td className="py-3.5 px-4 font-bold text-slate-900">{row.participantName}</td>
                       <td className="py-3.5 px-4">
                         <div className="flex flex-wrap gap-1">
-                          {row.seatIds.map((seatId) => (
+                          {(Array.isArray(row.seatIds) ? row.seatIds : []).map((seatId) => (
                             <span
                               key={seatId}
                               className="px-2 py-0.5 bg-purple-50 text-purple-700 font-extrabold text-[11px] rounded-md border border-purple-200/60"
@@ -164,6 +175,11 @@ export default function RecentAssignmentsTable({ assignments, onResend }: Recent
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
                             ● Usado en puerta
                           </span>
+                        ) : row.status === 'Desasignado' || row.status === 'Anulado' ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                            <Unlock className="w-3 h-3 text-slate-400" />
+                            Desasignado
+                          </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                             <Clock className="w-3 h-3 text-amber-600" />
@@ -172,37 +188,57 @@ export default function RecentAssignmentsTable({ assignments, onResend }: Recent
                         )}
                       </td>
 
-                      {/* ── Resend action button ───────────────────────── */}
+                      {/* ── Action buttons ───────────────────────── */}
                       <td className="py-3.5 px-4 text-right">
-                        {rs.status === 'loading' ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-indigo-500 font-semibold px-2 py-1">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            Enviando…
-                          </span>
-                        ) : rs.status === 'success' ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 font-bold px-2 py-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Enviado
-                          </span>
-                        ) : rs.status === 'error' ? (
-                          <button
-                            onClick={() => handleResendClick(row)}
-                            title="Reintentar reenvío"
-                            className="inline-flex items-center gap-1 text-xs text-red-600 font-bold hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg transition-colors cursor-pointer"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            Reintentar
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleResendClick(row)}
-                            title={`Reenviar ${row.seatIds.length} entradas a ${row.sentToEmail}`}
-                            disabled={!onResend}
-                            className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            <Send className="w-3.5 h-3.5" /> Reenviar
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-1.5">
+                          {row.status !== 'Desasignado' && row.status !== 'Anulado' && (
+                            <>
+                              {rs.status === 'loading' ? (
+                                <span className="inline-flex items-center gap-1.5 text-xs text-indigo-500 font-semibold px-2 py-1">
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  Enviando…
+                                </span>
+                              ) : rs.status === 'success' ? (
+                                <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 font-bold px-2 py-1">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  Enviado
+                                </span>
+                              ) : rs.status === 'error' ? (
+                                <button
+                                  onClick={() => handleResendClick(row)}
+                                  title="Reintentar reenvío"
+                                  className="inline-flex items-center gap-1 text-xs text-red-600 font-bold hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                  Reintentar
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleResendClick(row)}
+                                  title={`Reenviar ${row.seatIds.length} entradas a ${row.sentToEmail}`}
+                                  disabled={!onResend}
+                                  className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1 text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                  <Send className="w-3.5 h-3.5" /> Reenviar
+                                </button>
+                              )}
+
+                              {onUnassignAssignment && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUnassignError(null);
+                                    setConfirmingUnassign(row);
+                                  }}
+                                  title="Desasignar y liberar estas butacas"
+                                  className="p-1.5 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1 text-xs font-semibold"
+                                >
+                                  <Unlock className="w-3.5 h-3.5" /> Desasignar
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
 
@@ -250,6 +286,92 @@ export default function RecentAssignmentsTable({ assignments, onResend }: Recent
           </tbody>
         </table>
       </div>
+
+      {/* Confirmation Modal for Unassigning Assignment Record */}
+      {confirmingUnassign && onUnassignAssignment && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-amber-700">
+                <Unlock className="w-5 h-5" />
+                <h3 className="text-base font-extrabold text-slate-900">Confirmar Desasignación</h3>
+              </div>
+              <button
+                onClick={() => setConfirmingUnassign(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              ¿Estás seguro de desasignar esta asignación de{' '}
+              <strong className="text-slate-900">{confirmingUnassign.participantName}</strong>?
+            </p>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Butacas a liberar:</span>
+                <span className="font-extrabold text-indigo-700 font-mono">
+                  {confirmingUnassign.seatIds.join(', ')} ({confirmingUnassign.seatIds.length})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500 font-medium">Destinatario:</span>
+                <span className="font-medium text-slate-700 truncate">{confirmingUnassign.sentToEmail}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200/80 p-2.5 rounded-xl font-medium">
+              ⚠️ Las butacas quedarán inmediatamente marcadas como <strong>DISPONIBLES</strong> en la ticketera y el mapa.
+            </p>
+
+            {unassignError && (
+              <div className="bg-red-50 text-red-700 text-xs p-2.5 rounded-xl font-medium">
+                {unassignError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isUnassigning}
+                onClick={() => setConfirmingUnassign(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isUnassigning}
+                onClick={async () => {
+                  setIsUnassigning(true);
+                  setUnassignError(null);
+                  try {
+                    await onUnassignAssignment(confirmingUnassign);
+                    setConfirmingUnassign(null);
+                  } catch (err: any) {
+                    setUnassignError(err.message || 'Error al desasignar');
+                  } finally {
+                    setIsUnassigning(false);
+                  }
+                }}
+                className="px-4 py-2 text-xs font-extrabold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer"
+              >
+                {isUnassigning ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Desasignando...
+                  </>
+                ) : (
+                  <>
+                    <Unlock className="w-3.5 h-3.5" /> Confirmar y Liberar
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

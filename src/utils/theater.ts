@@ -3,6 +3,37 @@ import { Seat, Participant, AssignmentRecord } from '@/types/festival';
 export const ROWS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'];
 export const SEATS_PER_ROW = 34;
 
+export const EVENT_CONFIG = {
+  name: 'Festival Nacional Danza del Vientre',
+  year: 'Chile 2026',
+  fullTitle: 'Festival Nacional Danza del Vientre Chile 2026',
+  date: 'Sábado 5 de septiembre de 2026',
+  time: '17:30 hrs',
+  doorsOpen: '17:00 hrs',
+  venue: 'Teatro Aula Magna LMS',
+  venueAddress: 'Av. Irarrázaval 3780, Ñuñoa, Santiago',
+  venueShort: 'Teatro Aula Magna (Av. Irarrázaval 3780)',
+  city: 'Santiago, Chile',
+  generalPriceCLP: 10000,
+  serviceFeePct: 0.04,
+  serviceFeeCLP: 400,
+  salesCutoffIso: '2026-09-05T21:00:00-04:00', // Sábado 5 de septiembre de 2026, 21:00 hrs (hora de Chile)
+};
+
+/**
+ * Retorna true si la venta de entradas ya cerró (después de las 21:00 hrs del 5 de sept de 2026).
+ * Admite simulación en navegador mediante query param (?closed=1 o ?closed=0).
+ */
+export function isSalesClosed(): boolean {
+  if (typeof window !== 'undefined') {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('closed') === '1') return true;
+    if (urlParams.get('closed') === '0') return false;
+  }
+  const cutoff = new Date(EVENT_CONFIG.salesCutoffIso).getTime();
+  return Date.now() >= cutoff;
+}
+
 // Format seat number into 6 digit padded string for filename
 export function formatSeatFilename(row: string, seatNumber: number): string {
   const padded = String(seatNumber).padStart(6, '0');

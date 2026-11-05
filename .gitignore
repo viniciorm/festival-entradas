@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+*.sqlite
+scratch/
 
 # debug
 npm-debug.log*

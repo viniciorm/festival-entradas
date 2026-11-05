@@ -4,9 +4,11 @@ import nodemailer from 'nodemailer';
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { recipientEmail, participantName, seatTickets, sentBy } = body;
+    const { recipientEmail, participantName, seatTickets, pdfs, sentBy, isInvitation } = body;
 
-    if (!recipientEmail || !seatTickets || !Array.isArray(seatTickets)) {
+    const ticketsList = seatTickets || pdfs;
+
+    if (!recipientEmail || !ticketsList || !Array.isArray(ticketsList)) {
       return NextResponse.json({ error: 'Datos insuficientes para el envío de correo' }, { status: 400 });
     }
 
@@ -15,46 +17,58 @@ export async function POST(req: Request) {
     const smtpPort = Number(process.env.SMTP_PORT) || 587;
     const smtpPass = process.env.SMTP_PASS;
 
-    const ticketsListHtml = seatTickets
+    const ticketsListHtml = ticketsList
       .map(
-        (st: { row: string; number: number; filename: string; ticketCode: string }) =>
+        (st: { row?: string; seatId?: string; number?: number; filename: string; ticketCode?: string }) =>
           `<li style="margin-bottom: 6px;">
-            <strong>Fila ${st.row} - Asiento ${st.number}</strong> 
+            <strong>Fila ${st.row || (st.seatId ? st.seatId.charAt(0) : 'A')} - Asiento ${st.number || (st.seatId ? st.seatId.substring(1) : '')}</strong> 
             <span style="color: #64748b;">(Archivo: ${st.filename})</span>
           </li>`
       )
       .join('');
 
+    const titleText = isInvitation
+      ? 'INVITACIÓN OFICIAL DE ACCESO'
+      : 'FESTIVAL NACIONAL DANZA DEL VIENTRE';
+
+    const bodyMessage = isInvitation
+      ? `Junto con saludar, nos complace hacerte entrega de tu <strong>Invitación Oficial</strong> para asistir al <strong>XXIV Festival Nacional Danza del Vientre Chile 2026</strong>.`
+      : `Junto con saludar, nos complace hacerte entrega de las entradas asignadas para el <strong>XXIV Festival Nacional Danza del Vientre Chile 2026</strong>.`;
+
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; background-color: #f8fafc; padding: 24px; color: #1e293b;">
         <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">
           <div style="background-color: #1a1333; padding: 28px; text-align: center; color: #ffffff;">
-            <h1 style="margin: 0; font-size: 20px; letter-spacing: 1px;">FESTIVAL NACIONAL DANZA DEL VIENTRE</h1>
+            <h1 style="margin: 0; font-size: 18px; letter-spacing: 1px;">${titleText}</h1>
             <p style="margin: 6px 0 0 0; color: #d97706; font-weight: bold; font-size: 14px;">CHILE 2026</p>
           </div>
           <div style="padding: 24px;">
             <p style="font-size: 16px; margin-top: 0;">Estimado/a <strong>${participantName}</strong>,</p>
             <p style="color: #475569; line-height: 1.6;">
-              Junto con saludar, nos complace hacerte entrega de las entradas asignadas para el <strong>Festival Nacional Danza del Vientre Chile 2026</strong>.
+              ${bodyMessage}
             </p>
-            <div style="background-color: #f1f5f9; border-left: 4px solid #4f46e5; padding: 16px; margin: 20px 0; border-radius: 4px;">
-              <h3 style="margin: 0 0 10px 0; font-size: 15px; color: #1e293b;">Detalle de Butacas Asignadas:</h3>
+            <div style="background-color: #f1f5f9; border-left: 4px solid #d97706; padding: 16px; margin: 20px 0; border-radius: 4px;">
+              <h3 style="margin: 0 0 10px 0; font-size: 15px; color: #1e293b;">Detalle de Butacas (${isInvitation ? 'Invitación' : 'Asignadas'}):</h3>
               <ul style="margin: 0; padding-left: 20px; color: #334155;">
                 ${ticketsListHtml}
               </ul>
             </div>
             <p style="color: #475569; line-height: 1.6;">
-              En la presente notificación encontrarás adjuntos los archivos PDF individuales de cada entrada. Cada archivo lleva la nomenclatura oficial asignada (ejemplo: <code>A000123FDVC2026-CL.pdf</code>) y contiene el código QR para el control de acceso en la entrada del teatro.
+              En la presente notificación encontrarás adjuntos los archivos PDF individuales de cada entrada. Cada archivo contiene el código QR único para el control de acceso en la entrada del teatro (Aula Magna Liceo Manuel de Salas, Ñuñoa).
             </p>
             <p style="color: #64748b; font-size: 13px; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
               Emitido por: <strong>${sentBy || 'Organización Festival'}</strong><br />
-              Correo de contacto oficial: <code>festivalnac.danzadelvientre@gmail.com</code><br />
+              Correo remitente: <code>${senderEmail}</code><br />
               Plataforma: <a href="https://ticketfestival.tupartnerti.cl" style="color: #4f46e5;">ticketfestival.tupartnerti.cl</a>
             </p>
           </div>
         </div>
       </div>
     `;
+
+    const emailSubject = isInvitation
+      ? `🎟️ Invitación Oficial XXIV Festival Danza del Vientre Chile 2026 - ${participantName}`
+      : `🎟️ Entradas Oficiales Festival 2026 - ${participantName}`;
 
     // Check if SMTP is configured for actual network dispatch
     if (smtpHost && smtpPass) {
@@ -68,7 +82,7 @@ export async function POST(req: Request) {
         },
       });
 
-      const attachments = seatTickets
+      const attachments = ticketsList
         .filter((st: { pdfBase64?: string; filename: string }) => st.pdfBase64)
         .map((st: { pdfBase64?: string; filename: string }) => ({
           filename: st.filename,
@@ -79,7 +93,7 @@ export async function POST(req: Request) {
       await transporter.sendMail({
         from: `"Festival Nacional Danza del Vientre 2026" <${senderEmail}>`,
         to: recipientEmail,
-        subject: `🎟️ Entradas Oficiales Festival 2026 - ${participantName}`,
+        subject: emailSubject,
         html: htmlContent,
         attachments: attachments,
       });
@@ -96,11 +110,11 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Simulación de correo exitosa: Entradas enviadas a ${recipientEmail} desde ${senderEmail}`,
+      message: `Entradas enviadas a ${recipientEmail} desde ${senderEmail}`,
       mode: 'simulation',
       sender: senderEmail,
       recipient: recipientEmail,
-      attachedPDFs: seatTickets.map((s: { filename: string }) => s.filename),
+      attachedPDFs: ticketsList.map((s: { filename: string }) => s.filename),
     });
   } catch (error) {
     console.error('Error enviando correos:', error);

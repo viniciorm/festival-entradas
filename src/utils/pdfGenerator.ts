@@ -29,12 +29,28 @@ async function getLogoBase64(): Promise<string | null> {
   }
 }
 
-export async function generateTicketPDF(seat: Seat, participant?: Participant): Promise<{ pdfBlob: Blob; filename: string; dataUrl: string; securityHash: string }> {
+export function getOfficialPDFFilename(seat: { row?: string; row_name?: string; number?: number; seat_number?: number; paddedNumber?: string; pdfFilename?: string; id?: string }): string {
+  if (seat.pdfFilename && seat.pdfFilename.endsWith('FDVC2026-CL.pdf') && !seat.pdfFilename.startsWith('Entrada_')) {
+    return seat.pdfFilename;
+  }
+  const row = seat.row || seat.row_name || (seat.id ? seat.id[0] : 'A');
+  const numRaw = seat.number !== undefined ? seat.number : (seat.seat_number !== undefined ? seat.seat_number : (seat.id ? parseInt(seat.id.substring(1)) : 1));
+  const padded = String(numRaw).padStart(6, '0');
+  return `${row}${padded}FDVC2026-CL.pdf`;
+}
+
+export async function generateTicketPDF(
+  seat: Seat,
+  participant?: Participant | { name: string; contactPerson?: string },
+  options?: { isInvitation?: boolean }
+): Promise<{ pdfBlob: Blob; filename: string; dataUrl: string; securityHash: string }> {
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
     format: [140, 85], // 140mm x 85mm ticket format
   });
+
+  const isInvitation = options?.isInvitation || seat.status === 'invitation';
 
   // Colors
   const royalPurple = '#312E81';
@@ -62,94 +78,85 @@ export async function generateTicketPDF(seat: Seat, participant?: Participant): 
   if (logoBase64) {
     try {
       doc.addImage(logoBase64, 'JPEG', 8, 8, 32, 32);
-    } catch (e) {
-      console.warn('Could not render logo in PDF:', e);
+    } catch (err) {
+      console.warn('Could not render logo in PDF:', err);
     }
   }
 
-  // Left Sidebar Title Text
-  doc.setTextColor('#FFFFFF');
+  // Official Event Title
+  doc.setTextColor('#FAF5FF');
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text('FESTIVAL NACIONAL', 24, 46, { align: 'center' });
-  doc.text('DANZA DEL VIENTRE', 24, 50, { align: 'center' });
-
+  doc.text('FESTIVAL NACIONAL DE DANZA DEL VIENTRE', 24, 46, { align: 'center' });
   doc.setTextColor(gold);
   doc.setFontSize(10);
-  doc.setFont('helvetica', 'bold');
-  doc.text('CHILE 2026', 24, 57, { align: 'center' });
+  doc.text('CHILE 2026', 24, 51, { align: 'center' });
 
-  doc.setTextColor('#CBD5E1');
-  doc.setFontSize(6);
-  doc.setFont('helvetica', 'normal');
-  doc.text('ENTRADA OFICIAL', 24, 73, { align: 'center' });
-  doc.text('ticketfestival.tupartnerti.cl', 24, 77, { align: 'center' });
+  // Badge Type (INVITACIÓN, ENTRADA OFICIAL, BAILARINA)
+  if (isInvitation) {
+    doc.setFillColor('#F59E0B');
+    doc.roundedRect(6, 56, 36, 6, 1, 1, 'F');
+    doc.setTextColor('#1E1B4B');
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('INVITACIÓN ESPECIAL', 24, 60.2, { align: 'center' });
+  } else {
+    doc.setFillColor('#4C1D95');
+    doc.roundedRect(6, 56, 36, 6, 1, 1, 'F');
+    doc.setTextColor('#FAF5FF');
+    doc.setFontSize(6.5);
+    doc.setFont('helvetica', 'bold');
+    doc.text('ENTRADA OFICIAL', 24, 60.2, { align: 'center' });
+  }
 
-  // --- Right Main Body ---
-  // Event Name & Header
+  // Right Section - Event Header
   doc.setTextColor(royalPurple);
-  doc.setFontSize(12);
+  doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
-  doc.text('ENTRADA OFICIAL DE ACCESO', 54, 12);
+  doc.text('XXIV Festival Nacional Danza del Vientre', 54, 12);
+
+  doc.setTextColor(textDark);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'normal');
+  doc.text('Sábado 5 de Septiembre 2026 - 17:30 hrs | Aula Magna Liceo Manuel de Salas', 54, 16);
+
+  // Seat Location Highlights
+  doc.setFillColor('#F1F5F9');
+  doc.roundedRect(54, 22, 44, 20, 2, 2, 'F');
 
   doc.setTextColor('#64748B');
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.text('Teatro Municipal | Festival Danza del Vientre Chile 2026', 54, 16);
-
-  doc.setDrawColor('#E2E8F0');
-  doc.setLineWidth(0.3);
-  doc.line(54, 18, 134, 18);
-
-  // Seat Badge Box (Purple + Gold Border)
-  doc.setFillColor('#F3E8FF');
-  doc.setDrawColor(gold);
-  doc.setLineWidth(0.8);
-  doc.roundedRect(54, 22, 42, 24, 3, 3, 'FD');
-
-  doc.setTextColor('#581C87');
-  doc.setFontSize(7);
+  doc.setFontSize(6.5);
   doc.setFont('helvetica', 'bold');
-  doc.text('UBICACIÓN Y BUTACA', 58, 27);
+  doc.text('UBICACIÓN ASIGNADA', 57, 27);
 
-  doc.setTextColor('#0F172A');
+  doc.setTextColor(royalPurple);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text(`FILA ${seat.row}`, 58, 34);
+  doc.text(`FILA ${seat.row}`, 57, 34);
 
-  doc.setTextColor('#D97706');
-  doc.setFontSize(11);
-  doc.text(`ASIENTO ${seat.number}`, 58, 41);
+  doc.setTextColor(gold);
+  doc.setFontSize(14);
+  doc.text(`N° ${seat.number}`, 80, 34);
 
-  // Block Section
-  const blockText = seat.block === 'left' ? 'Bloque Izquierdo' : seat.block === 'right' ? 'Bloque Derecho' : 'Bloque Central';
   doc.setTextColor('#475569');
-  doc.setFontSize(7);
+  doc.setFontSize(6.5);
   doc.setFont('helvetica', 'normal');
-  doc.text(blockText, 58, 45);
+  doc.text(`Bloque: ${seat.block === 'center' ? 'Central' : seat.block === 'left' ? 'Izquierdo' : 'Derecho'}`, 57, 39);
 
-  // Participant Info Box
-  doc.setTextColor('#475569');
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.text('ASIGNADO A:', 54, 52);
+  // Participant Name / Buyer Name
+  const participantName = participant?.name || seat.assignedParticipantName || 'Asistente';
+  doc.setTextColor('#64748B');
+  doc.setFontSize(6.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('TITULAR / ASISTENTE', 54, 48);
 
   doc.setTextColor(textDark);
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
-  const partName = participant ? participant.name : (seat.assignedParticipantName || 'Participante / Solista');
-  doc.text(partName, 54, 57);
+  doc.text(participantName.substring(0, 30), 54, 53);
 
-  const partContact = participant?.contactPerson ? `Contacto: ${participant.contactPerson}` : '';
-  if (partContact) {
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor('#64748B');
-    doc.text(partContact, 54, 62);
-  }
-
-  // --- CRYPTOGRAPHIC SECURE QR CODE GENERATION ---
-  const { qrString, securityHash } = await createTicketQRPayload(seat, partName);
+  // Generate QR Code with Cryptographic Security Payload
+  const { qrString, securityHash } = await createTicketQRPayload(seat, participantName, isInvitation ? 'INVITATION' : 'OFFICIAL');
 
   const qrDataUrl = await QRCode.toDataURL(qrString, { width: 120, margin: 1, color: { dark: '#1E1B4B', light: '#FFFFFF' } });
   doc.addImage(qrDataUrl, 'PNG', 101, 22, 33, 33);
@@ -162,8 +169,8 @@ export async function generateTicketPDF(seat: Seat, participant?: Participant): 
   doc.setFont('helvetica', 'bold');
   doc.text(`HASH: ${securityHash}`, 117.5, 60.5, { align: 'center' });
 
-  // Ticket Code & Hash Footer Line
-  const filename = seat.pdfFilename || `${seat.row}${seat.paddedNumber}FDVC2026-CL.pdf`;
+  // Ticket Code & Hash Footer Line (EXACT OFFICIAL FORMAT <Fila><00000N>FDVC2026-CL.pdf)
+  const filename = getOfficialPDFFilename(seat);
 
   doc.setDrawColor('#CBD5E1');
   doc.setLineWidth(0.2);

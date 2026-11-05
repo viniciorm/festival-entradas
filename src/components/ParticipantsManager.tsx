@@ -16,24 +16,31 @@ import {
   Sparkles,
   ExternalLink,
   Globe,
+  Unlock,
 } from 'lucide-react';
-import { Participant } from '@/types/festival';
+import { Participant, Seat } from '@/types/festival';
+import UnassignSeatsModal from './UnassignSeatsModal';
 
 interface ParticipantsManagerProps {
   participants: Participant[];
+  seats?: Seat[];
   onAddParticipant: (participant: Omit<Participant, 'id' | 'assignedSeatsCount'>) => void;
   onDeleteParticipant?: (id: string) => void;
   onBulkAddParticipants?: (participantsList: Omit<Participant, 'id' | 'assignedSeatsCount'>[]) => void;
+  onUnassignSeats?: (participantId: string, seatIds: string[], reason: string, force?: boolean) => Promise<void>;
 }
 
 export default function ParticipantsManager({
   participants,
+  seats = [],
   onAddParticipant,
   onDeleteParticipant,
   onBulkAddParticipants,
+  onUnassignSeats,
 }: ParticipantsManagerProps) {
   const [showModal, setShowModal] = useState(false);
   const [showBulkModal, setShowBulkModal] = useState(false);
+  const [unassigningParticipant, setUnassigningParticipant] = useState<Participant | null>(null);
 
   // Single participant state
   const [name, setName] = useState('');
@@ -193,7 +200,7 @@ export default function ParticipantsManager({
 
       {/* Grid of Participants Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {participants.map((p) => (
+        {(participants || []).map((p) => (
           <div
             key={p.id}
             className="bg-slate-50/90 rounded-2xl p-4 border border-slate-200 hover:border-indigo-300 hover:bg-slate-50 transition-all flex flex-col justify-between space-y-3"
@@ -275,11 +282,28 @@ export default function ParticipantsManager({
               </div>
             </div>
 
-            <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs">
-              <span className="text-slate-500 font-medium">Entradas asignadas:</span>
-              <span className="font-extrabold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
-                {p.assignedSeatsCount} entradas
-              </span>
+            <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs gap-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-500 font-medium">Entradas:</span>
+                <span className={`font-extrabold px-2.5 py-0.5 rounded-full border ${
+                  p.assignedSeatsCount > 0
+                    ? 'text-indigo-600 bg-indigo-50 border-indigo-100'
+                    : 'text-slate-400 bg-slate-100 border-slate-200'
+                }`}>
+                  {p.assignedSeatsCount}
+                </span>
+              </div>
+
+              {p.assignedSeatsCount > 0 && onUnassignSeats && (
+                <button
+                  type="button"
+                  onClick={() => setUnassigningParticipant(p)}
+                  className="inline-flex items-center gap-1 text-[11px] font-extrabold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded-xl border border-amber-200/80 transition-colors cursor-pointer"
+                  title="Desasignar / liberar entradas de esta presentación"
+                >
+                  <Unlock className="w-3 h-3" /> Desasignar
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -457,6 +481,18 @@ export default function ParticipantsManager({
             )}
           </div>
         </div>
+      )}
+
+      {/* Modal Unassign Seats */}
+      {unassigningParticipant && onUnassignSeats && (
+        <UnassignSeatsModal
+          participant={unassigningParticipant}
+          seats={seats}
+          onClose={() => setUnassigningParticipant(null)}
+          onConfirmUnassign={async (seatIds, reason, force) => {
+            await onUnassignSeats(unassigningParticipant.id, seatIds, reason, force);
+          }}
+        />
       )}
     </div>
   );

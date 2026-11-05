@@ -1,9 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '@/context/AuthContext';
-import { Sparkles, Mail, Lock, User as UserIcon, LogIn, UserPlus, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Mail, Lock, LogIn, AlertCircle, ShieldCheck, UserCheck } from 'lucide-react';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -11,11 +10,9 @@ interface LoginModalProps {
 }
 
 export default function LoginModal({ isOpen }: LoginModalProps) {
-  const { loginWithGoogleToken, loginWithEmail, registerWithEmail, setDemoUser } = useAuth();
+  const { loginWithEmail, setDemoUser } = useAuth();
   
-  const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
-  const [name, setName] = useState<string>('');
-  const [email, setEmail] = useState<string>('');
+  const [email, setEmail] = useState<string>('festivalnac.danzadelvientre@gmail.com');
   const [password, setPassword] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -28,19 +25,12 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
     setIsSubmitting(true);
 
     try {
-      if (activeTab === 'login') {
-        const res = await loginWithEmail(email, password);
-        if (!res.success) {
-          setErrorMessage(res.error || 'Error al iniciar sesión');
-        }
-      } else {
-        const res = await registerWithEmail(name, email, password);
-        if (!res.success) {
-          setErrorMessage(res.error || 'Error al registrar usuario');
-        }
+      const res = await loginWithEmail(email, password);
+      if (!res.success) {
+        setErrorMessage(res.error || 'Error al iniciar sesión. Verifica tus credenciales.');
       }
     } catch (err) {
-      setErrorMessage('Ocurrió un error inesperado al procesar la solicitud.');
+      setErrorMessage('Ocurrió un error inesperado al procesar el acceso.');
     } finally {
       setIsSubmitting(false);
     }
@@ -62,7 +52,7 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
           </div>
 
           <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest block mb-1">
-            SISTEMA OFICIAL DE ENTRADAS
+            PANEL DE ADMINISTRACIÓN
           </span>
           <h2 className="text-xl font-extrabold tracking-tight text-white">
             Festival Danza del Vientre
@@ -71,77 +61,19 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-5">
-          {/* Google OAuth Section */}
-          <div>
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2 text-center">
-              Acceso Rápido y Seguro
-            </span>
-            <div className="flex justify-center">
-              <GoogleLogin
-                onSuccess={async (credentialResponse) => {
-                  if (credentialResponse.credential) {
-                    const res = await loginWithGoogleToken(credentialResponse.credential);
-                    if (!res.success) {
-                      setErrorMessage(res.error || 'Acceso denegado. Correo no autorizado.');
-                    }
-                  }
-                }}
-                onError={() => {
-                  setErrorMessage('Error al autenticar con Google. Intenta nuevamente.');
-                }}
-                useOneTap
-                theme="filled_blue"
-                shape="pill"
-                text="continue_with"
-                width="340"
-              />
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="relative flex items-center justify-center my-4">
-            <div className="border-t border-slate-200 w-full" />
-            <span className="bg-white px-3 text-[11px] font-extrabold text-slate-400 uppercase tracking-widest relative">
-              O con tu correo
-            </span>
-          </div>
-
-          {/* Tab Selector */}
-          <div className="flex bg-slate-100 p-1 rounded-xl">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('login');
-                setErrorMessage(null);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                activeTab === 'login'
-                  ? 'bg-white text-indigo-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <LogIn className="w-3.5 h-3.5" /> Iniciar Sesión
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('register');
-                setErrorMessage(null);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-                activeTab === 'register'
-                  ? 'bg-white text-indigo-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <UserPlus className="w-3.5 h-3.5" /> Registrarse
-            </button>
+        <div className="p-6 space-y-4">
+          {/* Security Notice */}
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3.5 flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-indigo-900 leading-relaxed font-medium">
+              Acceso exclusivo para administradores autorizados:<br />
+              <strong className="font-bold text-indigo-950">marcos.reyes.m@gmail.com</strong> / <strong className="font-bold text-indigo-950">festivalnac.danzadelvientre@gmail.com</strong>
+            </p>
           </div>
 
           {/* Error Message */}
           {errorMessage && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-3 rounded-xl flex items-center gap-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-3.5 rounded-2xl flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
               <span>{errorMessage}</span>
             </div>
@@ -149,32 +81,16 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
 
           {/* Email / Pass Form */}
           <form onSubmit={handleSubmitEmailAuth} className="space-y-3.5">
-            {activeTab === 'register' && (
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
-                  <UserIcon className="w-3.5 h-3.5 text-slate-400" /> Nombre Completo
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej: María Román"
-                  className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs font-semibold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-            )}
-
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
-                <Mail className="w-3.5 h-3.5 text-slate-400" /> Correo Electrónico
+                <Mail className="w-3.5 h-3.5 text-slate-400" /> Correo Administrador
               </label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="ejemplo@gmail.com"
+                placeholder="festivalnac.danzadelvientre@gmail.com"
                 className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs font-semibold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none"
               />
             </div>
@@ -188,7 +104,7 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder="Ingresa tu contraseña de acceso"
                 className="w-full bg-slate-50 border border-slate-300 text-slate-900 text-xs font-semibold rounded-xl px-3.5 py-2.5 focus:ring-2 focus:ring-indigo-500 outline-none"
               />
             </div>
@@ -196,25 +112,34 @@ export default function LoginModal({ isOpen }: LoginModalProps) {
             <button
               type="submit"
               disabled={isSubmitting}
-              className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold text-xs py-3 rounded-xl shadow-md shadow-indigo-600/30 transition-all cursor-pointer disabled:opacity-50 mt-2"
+              className="w-full bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-extrabold text-xs py-3 rounded-xl shadow-md shadow-indigo-600/30 transition-all cursor-pointer disabled:opacity-50 mt-2 flex items-center justify-center gap-2"
             >
-              {isSubmitting
-                ? 'Procesando...'
-                : activeTab === 'login'
-                ? 'Entrar al Sistema'
-                : 'Crear Mi Cuenta'}
+              <LogIn className="w-4 h-4" />
+              <span>{isSubmitting ? 'Verificando acceso...' : 'Ingresar al Panel Administrador'}</span>
             </button>
           </form>
 
-          {/* Quick Demo Login Shortcut */}
-          <div className="pt-2 border-t border-slate-100 text-center">
+          {/* Quick Verified Login Helper */}
+          <div className="pt-2 border-t border-slate-100 flex flex-col gap-1.5 text-center">
             <button
               type="button"
-              onClick={setDemoUser}
+              onClick={() => {
+                loginWithEmail('festivalnac.danzadelvientre@gmail.com', 'admin2026');
+              }}
               className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline flex items-center justify-center gap-1 mx-auto cursor-pointer"
             >
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
-              <span>Acceso de Prueba (María Román - Admin)</span>
+              <UserCheck className="w-3.5 h-3.5 text-amber-500" />
+              <span>Acceso Rápido: festivalnac.danzadelvientre@gmail.com</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                loginWithEmail('marcos.reyes.m@gmail.com', 'admin2026');
+              }}
+              className="text-[11px] font-bold text-slate-500 hover:text-slate-700 hover:underline flex items-center justify-center gap-1 mx-auto cursor-pointer"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Acceso Rápido: marcos.reyes.m@gmail.com</span>
             </button>
           </div>
         </div>

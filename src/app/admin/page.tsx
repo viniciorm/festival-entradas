@@ -8,13 +8,20 @@ import SeatMap from '@/components/SeatMap';
 import AssignmentPanel from '@/components/AssignmentPanel';
 import RecentAssignmentsTable from '@/components/RecentAssignmentsTable';
 import ParticipantsManager from '@/components/ParticipantsManager';
+import InvitationsManager from '@/components/InvitationsManager';
+import InvitationCreateFlow from '@/components/InvitationCreateFlow';
+import DiscountsManager, { DiscountCode } from '@/components/DiscountsManager';
 import GateScanner, { ScanLogItem } from '@/components/GateScanner';
 import SettingsView from '@/components/SettingsView';
+import DashboardOverview from '@/components/DashboardOverview';
+import BlockedSeatsManager from '@/components/BlockedSeatsManager';
+import WebpayOrdersManager from '@/components/WebpayOrdersManager';
 import LoginModal from '@/components/LoginModal';
 import { useAuth } from '@/context/AuthContext';
 
-import { Seat, Participant, AssignmentRecord, FestivalStats } from '@/types/festival';
+import { Seat, Participant, AssignmentRecord, InvitationRecord, FestivalStats } from '@/types/festival';
 import ParticipantSeatSummary from '@/components/ParticipantSeatSummary';
+import UnassignSeatsModal from '@/components/UnassignSeatsModal';
 import {
   generateInitialSeats,
   INITIAL_PARTICIPANTS,
@@ -27,16 +34,21 @@ import { ShieldCheck, CheckCircle2, AlertTriangle, Ticket, Home as HomeIcon, Use
 
 export default function AdminPage() {
   const { user, isLoading } = useAuth();
-  const [activeTab, setActiveTab] = useState<string>('tickets');
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [seats, setSeats] = useState<Seat[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
+  const [invitations, setInvitations] = useState<InvitationRecord[]>([]);
+  const [discounts, setDiscounts] = useState<DiscountCode[]>([]);
+  const [selectedParticipantToUnassign, setSelectedParticipantToUnassign] = useState<Participant | null>(null);
+  const [isCreatingInvitation, setIsCreatingInvitation] = useState<boolean>(false);
   const [scanLogs, setScanLogs] = useState<ScanLogItem[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const isProcessingRef = useRef<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   // Phone Camera QR Scan Modal Result
   const [urlScanResult, setUrlScanResult] = useState<{
@@ -57,22 +69,29 @@ export default function AdminPage() {
         const json = await res.json();
         if (json.seats && Array.isArray(json.seats) && json.seats.length > 0) {
           setSeats(json.seats);
-          localStorage.setItem('fdvc_seats_2026', JSON.stringify(json.seats));
+          setApiError(null);
         }
         if (json.participants && Array.isArray(json.participants) && json.participants.length > 0) {
           setParticipants(json.participants);
-          localStorage.setItem('fdvc_participants_2026', JSON.stringify(json.participants));
         }
         if (json.assignments && Array.isArray(json.assignments)) {
           setAssignments(json.assignments);
-          localStorage.setItem('fdvc_assignments_2026', JSON.stringify(json.assignments));
         }
         if (json.scanLogs && Array.isArray(json.scanLogs)) {
           setScanLogs(json.scanLogs);
         }
+        if (json.invitations && Array.isArray(json.invitations)) {
+          setInvitations(json.invitations);
+        }
+        if (json.discounts && Array.isArray(json.discounts)) {
+          setDiscounts(json.discounts);
+        }
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        setApiError(errJson.error || 'No se pudo cargar el inventario real desde la base de datos tupartne_festival');
       }
-    } catch (e) {
-      console.warn('Central server sync notice:', e);
+    } catch (e: any) {
+      setApiError('No se pudo conectar con el servidor de la base de datos tupartne_festival');
     }
   }, []);
 
@@ -163,12 +182,13 @@ export default function AdminPage() {
   // Calculate live stats
   const stats: FestivalStats = React.useMemo(() => {
     const totalSeats = seats.length || 544;
-    const assignedSeats = seats.filter((s) => s.status !== 'available').length;
-    const availableSeats = totalSeats - assignedSeats;
+    const blockedSeats = seats.filter((s) => s.status === 'blocked').length;
+    const assignedSeats = seats.filter((s) => s.status !== 'available' && s.status !== 'blocked').length;
+    const availableSeats = seats.filter((s) => s.status === 'available').length;
     const sentToday = assignments.filter((a) => a.status === 'Enviado').length;
     const checkedInCount = seats.filter((s) => s.status === 'checked_in').length;
 
-    return { totalSeats, assignedSeats, availableSeats, sentToday, checkedInCount };
+    return { totalSeats, assignedSeats, availableSeats, blockedSeats, sentToday, checkedInCount };
   }, [seats, assignments]);
 
   // Toggle seat selection
@@ -592,6 +612,446 @@ export default function AdminPage() {
     }
   };
 
+  // ── INVITATIONS HANDLERS ──────────────────────────────────────────────────
+  const handleCreateInvitationSubmit = async (formData: {
+    guestName: string;
+    guestEmail: string;
+    guestPhone: string;
+    seatIds: string[];
+    reason: string;
+    internalNotes: string;
+  }) => {
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/admin/invitations.php?action=create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          createdBy: user?.name || 'Administrador',
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Error al guardar la invitación en el servidor');
+      }
+
+      // Generate PDFs with isInvitation: true and download locally
+      const pdfsToSend: Array<{ seatId: string; row: string; number: number; filename: string; pdfBase64: string }> = [];
+
+      for (const sid of formData.seatIds) {
+        const rowName = sid.charAt(0);
+        const seatNum = parseInt(sid.substring(1)) || 1;
+        const paddedNum = String(seatNum).padStart(6, '0');
+        const officialFilename = `${rowName}${paddedNum}FDVC2026-CL.pdf`;
+
+        const targetSeat = seats.find((s) => s.id === sid) || {
+          id: sid,
+          row: rowName,
+          number: seatNum,
+          paddedNumber: paddedNum,
+          block: 'center' as const,
+          status: 'invitation' as const,
+          pdfFilename: officialFilename,
+        };
+
+        const { pdfBlob, filename } = await generateTicketPDF(targetSeat, { name: formData.guestName }, { isInvitation: true });
+        downloadPDFBlob(pdfBlob, filename);
+
+        const base64: string = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const resStr = reader.result as string;
+            resolve(resStr.split(',')[1] || '');
+          };
+          reader.readAsDataURL(pdfBlob);
+        });
+
+        pdfsToSend.push({ seatId: sid, row: rowName, number: seatNum, filename, pdfBase64: base64 });
+      }
+
+      // Batch ticket payloads into chunks of maximum 5 tickets per email
+      const BATCH_SIZE = 5;
+      const batches = [];
+      for (let i = 0; i < pdfsToSend.length; i += BATCH_SIZE) {
+        batches.push(pdfsToSend.slice(i, i + BATCH_SIZE));
+      }
+
+      for (let i = 0; i < batches.length; i++) {
+        const currentBatch = batches[i];
+        const emailRes = await fetch('/api/send-tickets.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipientEmail: formData.guestEmail,
+            participantName: formData.guestName,
+            seatTickets: currentBatch,
+            sentBy: user?.name || 'Administrador',
+            isInvitation: true,
+            batchIndex: i + 1,
+            totalBatches: batches.length,
+          }),
+        });
+
+        if (!emailRes.ok) {
+          const errData = await emailRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Error al enviar correo (lote ${i + 1}/${batches.length})`);
+        }
+      }
+
+      setToastMessage(`✅ INVITACIÓN EMITIDA, DESCARGADA Y ENVIADA a ${formData.guestName} (${formData.seatIds.join(', ')})`);
+      setTimeout(() => setToastMessage(null), 6000);
+      setIsCreatingInvitation(false);
+      await fetchCentralData();
+    } catch (err: any) {
+      console.error('Error emitting invitation:', err);
+      throw err;
+    } finally {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDownloadInvitationPDFs = async (inv: InvitationRecord) => {
+    try {
+      setToastMessage(`⏳ Generando ${inv.seatIds.length} PDF(s) de invitación para descarga...`);
+      for (const sid of inv.seatIds) {
+        const rowName = sid.charAt(0);
+        const seatNum = parseInt(sid.substring(1)) || 1;
+        const paddedNum = String(seatNum).padStart(6, '0');
+        const officialFilename = `${rowName}${paddedNum}FDVC2026-CL.pdf`;
+
+        const targetSeat = seats.find((s) => s.id === sid) || {
+          id: sid,
+          row: rowName,
+          number: seatNum,
+          paddedNumber: paddedNum,
+          block: 'center' as const,
+          status: 'invitation' as const,
+          pdfFilename: officialFilename,
+        };
+
+        const { pdfBlob, filename } = await generateTicketPDF(targetSeat, { name: inv.guestName }, { isInvitation: true });
+        downloadPDFBlob(pdfBlob, filename);
+      }
+      setToastMessage(`✅ ${inv.seatIds.length} PDF(s) descargados exitosamente.`);
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error('Error downloading invitation PDFs:', err);
+      setToastMessage(`❌ Error al descargar PDFs: ${err.message}`);
+      setTimeout(() => setToastMessage(null), 5000);
+    }
+  };
+
+  const handleResendInvitation = async (inv: InvitationRecord) => {
+    try {
+      setToastMessage(`⏳ Reenviando ${inv.seatIds.length} entrada(s) de invitación a ${inv.guestEmail}...`);
+      const pdfsToSend: Array<{ seatId: string; row: string; number: number; filename: string; pdfBase64: string }> = [];
+
+      for (const sid of inv.seatIds) {
+        const targetSeat = seats.find((s) => s.id === sid) || {
+          id: sid,
+          row: sid.charAt(0),
+          number: parseInt(sid.substring(1)) || 1,
+          paddedNumber: '000001',
+          block: 'center' as const,
+          status: 'invitation' as const,
+          pdfFilename: `${sid}FDVC2026-CL.pdf`,
+        };
+
+        const { pdfBlob, filename } = await generateTicketPDF(targetSeat, { name: inv.guestName }, { isInvitation: true });
+
+        const base64: string = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const resStr = reader.result as string;
+            resolve(resStr.split(',')[1] || '');
+          };
+          reader.readAsDataURL(pdfBlob);
+        });
+
+        pdfsToSend.push({ seatId: sid, row: targetSeat.row, number: targetSeat.number, filename, pdfBase64: base64 });
+      }
+
+      // Batch into chunks of max 5 tickets per email
+      const BATCH_SIZE = 5;
+      const batches = [];
+      for (let i = 0; i < pdfsToSend.length; i += BATCH_SIZE) {
+        batches.push(pdfsToSend.slice(i, i + BATCH_SIZE));
+      }
+
+      for (let i = 0; i < batches.length; i++) {
+        const currentBatch = batches[i];
+        const emailRes = await fetch('/api/send-tickets.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recipientEmail: inv.guestEmail,
+            participantName: inv.guestName,
+            seatTickets: currentBatch,
+            sentBy: user?.name || 'Administrador',
+            isInvitation: true,
+            batchIndex: i + 1,
+            totalBatches: batches.length,
+          }),
+        });
+
+        if (!emailRes.ok) {
+          const errJson = await emailRes.json().catch(() => ({}));
+          throw new Error(errJson.error || `Error al enviar correo (lote ${i + 1}/${batches.length})`);
+        }
+      }
+
+      await fetch(`/api/admin/invitations.php?action=resend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invitationId: inv.id,
+          resentBy: user?.name || 'Administrador',
+        }),
+      });
+      setToastMessage(`✉️ Entradas de invitación reenviadas a ${inv.guestEmail}`);
+      setTimeout(() => setToastMessage(null), 5000);
+      await fetchCentralData();
+    } catch (err: any) {
+      console.error('Error resending invitation:', err);
+      setToastMessage(`❌ Error al reenviar invitación: ${err.message}`);
+      setTimeout(() => setToastMessage(null), 6000);
+    }
+  };
+
+  const handleCancelInvitation = async (invitationId: string, reason: string) => {
+    try {
+      const res = await fetch('/api/admin/invitations.php?action=cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invitationId,
+          cancelledBy: user?.name || 'Administrador',
+          cancelReason: reason,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'No se pudo anular la invitación');
+      }
+
+      setToastMessage(`✅ ${json.message || 'Invitación anulada exitosamente'}`);
+      setTimeout(() => setToastMessage(null), 6000);
+      await fetchCentralData();
+    } catch (err: any) {
+      console.error('Error cancelling invitation:', err);
+      setToastMessage(`❌ ${err.message}`);
+      setTimeout(() => setToastMessage(null), 6000);
+      throw err;
+    }
+  };
+
+  // ── UNASSIGN SEATS HANDLERS ────────────────────────────────────────────────
+  const handleUnassignSeats = async (
+    participantId: string,
+    seatIds: string[],
+    reason: string = 'Desasignación desde panel administrador',
+    force: boolean = false
+  ) => {
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/admin/unassign.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seatIds,
+          participantId,
+          reason,
+          force,
+          unassignedBy: user?.name || user?.email || 'Administrador',
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Error al desasignar las butacas');
+      }
+
+      // 1. Update local state immediately
+      const updatedSeats = seats.map((s) => {
+        if (seatIds.includes(s.id)) {
+          return {
+            ...s,
+            status: 'available' as const,
+            assignedParticipantId: undefined,
+            assignedParticipantName: undefined,
+            ticketCode: undefined,
+            pdfFilename: undefined,
+            checkedInAt: undefined,
+          };
+        }
+        return s;
+      });
+
+      const updatedParticipants = participants.map((p) => {
+        if (p.id === participantId) {
+          const remainingCount = Math.max(0, p.assignedSeatsCount - seatIds.length);
+          return { ...p, assignedSeatsCount: remainingCount };
+        }
+        return p;
+      });
+
+      const updatedAssignments = assignments.map((a) => {
+        if (a.participantId === participantId) {
+          const remSeats = (Array.isArray(a.seatIds) ? a.seatIds : []).filter((s) => !seatIds.includes(s));
+          if (remSeats.length === 0) {
+            return { ...a, seatIds: [], status: 'Desasignado' as const };
+          }
+          return { ...a, seatIds: remSeats };
+        }
+        return a;
+      });
+
+      saveSeatsState(updatedSeats, true);
+      saveParticipantsState(updatedParticipants, true);
+      saveAssignmentsState(updatedAssignments, true);
+
+      // Clear selection if any of the unassigned seats were selected
+      setSelectedSeatIds((prev) => prev.filter((id) => !seatIds.includes(id)));
+
+      setToastMessage(`✅ ${json.message || `Se desasignaron ${seatIds.length} butaca(s) exitosamente.`}`);
+      setTimeout(() => setToastMessage(null), 6000);
+
+      // 2. Fetch fresh central data from MySQL
+      await fetchCentralData();
+    } catch (err: any) {
+      console.error('Error in handleUnassignSeats:', err);
+      setToastMessage(`❌ ${err.message}`);
+      setTimeout(() => setToastMessage(null), 6000);
+      throw err;
+    } finally {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUnassignAssignment = async (assignment: AssignmentRecord) => {
+    return handleUnassignSeats(
+      assignment.participantId,
+      assignment.seatIds,
+      `Desasignación de asignación ${assignment.id} (${assignment.participantName})`
+    );
+  };
+
+  const handleUnassignSelectedSeats = async (seatIds: string[]) => {
+    const firstAssigned = seats.find((s) => seatIds.includes(s.id) && !!s.assignedParticipantId);
+    const participantId = firstAssigned?.assignedParticipantId || '';
+    return handleUnassignSeats(
+      participantId,
+      seatIds,
+      'Desasignación rápida desde mapa de butacas'
+    );
+  };
+
+  // ── BLOCK / UNBLOCK SEATS HANDLERS ──────────────────────────────────────────
+  const handleBlockSeats = async (seatIds: string[], reason: string, notes?: string) => {
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/admin/block-seats.php?action=block', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seatIds,
+          reason,
+          notes,
+          blockedBy: user?.name || user?.email || 'Administrador',
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Error al bloquear las butacas');
+      }
+
+      // Optimistic state update
+      const updatedSeats = seats.map((s) => {
+        if (seatIds.includes(s.id)) {
+          return {
+            ...s,
+            status: 'blocked' as const,
+            blockedReason: reason,
+            blockedNotes: notes,
+            blockedAt: new Date().toISOString(),
+            blockedBy: user?.name || 'Administrador',
+          };
+        }
+        return s;
+      });
+
+      saveSeatsState(updatedSeats, true);
+      setToastMessage(`🚫 ${json.message || `Se marcaron ${seatIds.length} butaca(s) como no disponibles.`}`);
+      setTimeout(() => setToastMessage(null), 5000);
+      await fetchCentralData();
+    } catch (err: any) {
+      console.error('Error in handleBlockSeats:', err);
+      setToastMessage(`❌ ${err.message}`);
+      setTimeout(() => setToastMessage(null), 6000);
+      throw err;
+    } finally {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUnblockSeats = async (seatIds: string[]) => {
+    isProcessingRef.current = true;
+    setIsProcessing(true);
+    try {
+      const res = await fetch('/api/admin/block-seats.php?action=unblock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seatIds,
+          unblockedBy: user?.name || user?.email || 'Administrador',
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Error al reactivar las butacas');
+      }
+
+      // Optimistic state update
+      const updatedSeats = seats.map((s) => {
+        if (seatIds.includes(s.id) && s.status === 'blocked') {
+          return {
+            ...s,
+            status: 'available' as const,
+            blockedReason: undefined,
+            blockedNotes: undefined,
+            blockedAt: undefined,
+            blockedBy: undefined,
+          };
+        }
+        return s;
+      });
+
+      saveSeatsState(updatedSeats, true);
+      setToastMessage(`✅ ${json.message || `Se reactivaron ${seatIds.length} butaca(s) como disponibles.`}`);
+      setTimeout(() => setToastMessage(null), 5000);
+      await fetchCentralData();
+    } catch (err: any) {
+      console.error('Error in handleUnblockSeats:', err);
+      setToastMessage(`❌ ${err.message}`);
+      setTimeout(() => setToastMessage(null), 6000);
+      throw err;
+    } finally {
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+    }
+  };
+
   const selectedSeats = seats.filter((s) => selectedSeatIds.includes(s.id));
 
   // ── Auth Guard: block ALL content until session is confirmed ──────────────
@@ -673,12 +1133,34 @@ export default function AdminPage() {
 
           {/* Body Content by Active Tab */}
           <main className="flex-1 p-4 md:p-8 space-y-8 max-w-7xl w-full mx-auto">
-            {/* Top Dashboard Metrics */}
-            <StatsCards stats={stats} />
+            {apiError && (
+              <div className="p-4 bg-red-50 border border-red-300 text-red-950 font-extrabold rounded-2xl flex items-center justify-between text-xs shadow-sm">
+                <span>⚠️ ALERTA DE INVENTARIO REAL: {apiError}</span>
+                <button onClick={fetchCentralData} className="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white rounded-xl text-[11px] font-bold cursor-pointer transition-all">
+                  Reintentar Conexión MySQL
+                </button>
+              </div>
+            )}
 
-            {/* TAB: Entradas / Dashboard Principal */}
+            {/* TAB: Resumen Ejecutivo (Stitch Dashboard) */}
+            {activeTab === 'dashboard' && (
+              <DashboardOverview
+                stats={stats}
+                assignments={assignments}
+                seats={seats}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+              />
+            )}
+
+            {/* TAB: Compras y Webpay Plus */}
+            {activeTab === 'orders' && (
+              <WebpayOrdersManager onRefreshGlobalData={fetchCentralData} />
+            )}
+
+            {/* TAB: Entradas / Mapa y Asignaciones */}
             {(activeTab === 'tickets' || activeTab === 'overview') && (
               <>
+                <StatsCards stats={stats} />
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
                   <div className="lg:col-span-2">
                     <SeatMap
@@ -694,14 +1176,23 @@ export default function AdminPage() {
                       selectedSeats={selectedSeats}
                       participants={participants}
                       onAssignAndSend={handleAssignAndSend}
+                      onUnassignSelectedSeats={handleUnassignSelectedSeats}
                       isProcessing={isProcessing}
                     />
                   </div>
                 </div>
 
-                <ParticipantSeatSummary participants={participants} seats={seats} />
+                <ParticipantSeatSummary
+                  participants={participants}
+                  seats={seats}
+                  onOpenUnassign={(p) => setSelectedParticipantToUnassign(p)}
+                />
 
-                <RecentAssignmentsTable assignments={assignments} onResend={handleResendAssignment} />
+                <RecentAssignmentsTable
+                  assignments={assignments}
+                  onResend={handleResendAssignment}
+                  onUnassignAssignment={handleUnassignAssignment}
+                />
               </>
             )}
 
@@ -709,9 +1200,52 @@ export default function AdminPage() {
             {activeTab === 'participants' && (
               <ParticipantsManager
                 participants={participants}
+                seats={seats}
                 onAddParticipant={handleAddParticipant}
                 onDeleteParticipant={handleDeleteParticipant}
                 onBulkAddParticipants={handleBulkAddParticipants}
+                onUnassignSeats={handleUnassignSeats}
+              />
+            )}
+
+            {/* TAB: Invitaciones Especiales */}
+            {activeTab === 'invitations' && (
+              isCreatingInvitation ? (
+                <InvitationCreateFlow
+                  seats={seats}
+                  onCancel={() => setIsCreatingInvitation(false)}
+                  onConfirmEmit={handleCreateInvitationSubmit}
+                  currentAdminName={user?.name}
+                />
+              ) : (
+                <InvitationsManager
+                  invitations={invitations}
+                  seats={seats}
+                  onOpenCreateFlow={() => setIsCreatingInvitation(true)}
+                  onResendInvitation={handleResendInvitation}
+                  onCancelInvitation={handleCancelInvitation}
+                  onDownloadPDFs={handleDownloadInvitationPDFs}
+                  currentUserEmail={user?.email}
+                  currentUserName={user?.name}
+                />
+              )
+            )}
+
+            {/* TAB: Butacas No Disponibles (Mala Visión / Dañadas / Técnicas) */}
+            {activeTab === 'blocked-seats' && (
+              <BlockedSeatsManager
+                seats={seats}
+                onBlockSeats={handleBlockSeats}
+                onUnblockSeats={handleUnblockSeats}
+                isProcessing={isProcessing}
+              />
+            )}
+
+            {/* TAB: Códigos de Descuento */}
+            {activeTab === 'discounts' && (
+              <DiscountsManager
+                discounts={discounts}
+                onRefresh={fetchCentralData}
               />
             )}
 
@@ -729,6 +1263,18 @@ export default function AdminPage() {
           </main>
         </div>
       </div>
+
+      {/* Global Unassign Seats Modal for triggers from Summary / Overview */}
+      {selectedParticipantToUnassign && (
+        <UnassignSeatsModal
+          participant={selectedParticipantToUnassign}
+          seats={seats}
+          onClose={() => setSelectedParticipantToUnassign(null)}
+          onConfirmUnassign={async (seatIds, reason, force) => {
+            await handleUnassignSeats(selectedParticipantToUnassign.id, seatIds, reason, force);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -45,7 +45,11 @@ export async function generateTicketSignature(seatId: string, row: string, seatN
 /**
  * Creates the complete signed security payload encoded into the QR Code
  */
-export async function createTicketQRPayload(seat: { id: string; row: string; number: number; ticketCode?: string }, participantName: string) {
+export async function createTicketQRPayload(
+  seat: { id: string; row: string; number: number; ticketCode?: string },
+  participantName: string,
+  ticketType?: string
+) {
   const sig = await generateTicketSignature(seat.id, seat.row, seat.number);
   const shortHash = sig.substring(0, 8).toUpperCase();
   const formattedHash = `${shortHash.substring(0, 4)}-${shortHash.substring(4, 8)}`;

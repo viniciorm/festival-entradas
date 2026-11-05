@@ -44,14 +44,14 @@ export default function StatsCards({ stats }: StatsCardsProps) {
         </div>
       </div>
 
-      {/* Sent Today */}
+      {/* Total Sent Assignments */}
       <div className="bg-white rounded-2xl p-3.5 sm:p-5 border border-slate-200/80 shadow-xs flex items-center gap-3 sm:gap-4 hover:shadow-md transition-shadow">
         <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-amber-100/80 text-amber-700 flex items-center justify-center shrink-0">
           <Send className="w-5 h-5 sm:w-6 sm:h-6" />
         </div>
         <div>
           <span className="text-xl sm:text-2xl font-black text-amber-600 tracking-tight">{stats.sentToday}</span>
-          <p className="text-[10px] sm:text-xs font-semibold text-slate-500">Enviadas hoy</p>
+          <p className="text-[10px] sm:text-xs font-semibold text-slate-500">Asignaciones enviadas</p>
         </div>
       </div>
     </div>

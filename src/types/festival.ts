@@ -1,8 +1,8 @@
-export type SeatStatus = 'available' | 'selected' | 'assigned' | 'sent' | 'checked_in';
+export type SeatStatus = 'available' | 'selected' | 'assigned' | 'sent' | 'invitation' | 'sold' | 'reserved' | 'checked_in' | 'blocked';
 export type SeatBlock = 'left' | 'center' | 'right';
 
 export interface Seat {
-  id: string; // e.g. "A-12"
+  id: string; // e.g. "A12"
   row: string; // "A", "B", ...
   number: number; // 1..34
   paddedNumber: string; // "000012"
@@ -15,6 +15,10 @@ export interface Seat {
   pdfFilename?: string; // "A000012FDVC2026-CL.pdf"
   sentAt?: string;
   checkedInAt?: string;
+  blockedReason?: string;
+  blockedNotes?: string;
+  blockedAt?: string;
+  blockedBy?: string;
 }
 
 export interface Participant {
@@ -41,13 +45,39 @@ export interface AssignmentRecord {
   seatIds: string[];
   sentToEmail: string;
   sentBy: string;
-  status: 'Asignado' | 'Enviado' | 'Canjeado';
+  status: 'Asignado' | 'Enviado' | 'Canjeado' | 'Desasignado' | 'Anulado';
+}
+
+export interface InvitationRecord {
+  id: string;
+  guestName: string;
+  guestEmail: string;
+  guestPhone?: string;
+  seatIds: string[];
+  reason?: 'artista' | 'prensa' | 'auspiciador' | 'cortesía' | 'producción' | 'otro';
+  internalNotes?: string;
+  createdBy: string;
+  createdAt: string;
+  sentAt?: string;
+  sendStatus: 'pending' | 'sent' | 'failed';
+  status: 'valid' | 'cancelled' | 'used';
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  resendCount?: number;
+  lastResentAt?: string;
+  lastResentBy?: string;
+  // Wallet pass support preparation
+  appleWalletUrl?: string;
+  googleWalletUrl?: string;
 }
 
 export interface FestivalStats {
   totalSeats: number;
   assignedSeats: number;
   availableSeats: number;
+  blockedSeats?: number;
   sentToday: number;
   checkedInCount: number;
 }
+

@@ -493,7 +493,7 @@ export default function GateScanner({
           </div>
 
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-            {scanLogs.map((log) => (
+            {(scanLogs || []).map((log) => (
               <div
                 key={log.id}
                 className={`p-3 rounded-xl border flex items-center justify-between text-xs font-semibold ${

@@ -39,8 +39,14 @@ export default function SeatMap({
         return 'bg-slate-300 text-slate-700 border-slate-400 hover:bg-slate-400/80 cursor-pointer';
       case 'sent':
         return 'bg-indigo-600 text-white font-bold border-indigo-800 ring-1 ring-indigo-400 cursor-pointer';
+      case 'invitation':
+        return 'bg-amber-500 text-white font-bold border-amber-600 ring-1 ring-amber-300 cursor-pointer';
+      case 'sold':
+        return 'bg-purple-600 text-white font-bold border-purple-800 ring-1 ring-purple-400 cursor-pointer';
       case 'checked_in':
         return 'bg-red-500 text-white font-bold border-red-700 cursor-not-allowed opacity-90';
+      case 'blocked':
+        return 'bg-slate-900 text-rose-300 font-bold border-rose-950 line-through ring-1 ring-rose-500/40 cursor-not-allowed opacity-90';
       case 'available':
       default:
         return 'bg-purple-100/90 text-purple-900 border-purple-200 hover:bg-purple-300/80 hover:scale-105 cursor-pointer';
@@ -52,7 +58,7 @@ export default function SeatMap({
       {/* Map Header & Legend */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
         <div>
-          <h2 className="text-lg font-extrabold text-slate-900">Mapa de butacas</h2>
+          <h2 className="text-lg font-extrabold text-slate-900">Mapa de mecenas y entradas</h2>
           <p className="text-xs text-slate-500">Selecciona las butacas para asignar o enviar</p>
         </div>
 
@@ -72,7 +78,15 @@ export default function SeatMap({
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-indigo-600 inline-block" />
-            <span>Enviada por Mail</span>
+            <span>Enviada Mail</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 rounded-full bg-amber-500 inline-block" />
+            <span>Invitación</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-3.5 h-3.5 rounded-full bg-slate-900 border border-rose-500/50 inline-block" />
+            <span>No Disponible / Mala Visión</span>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-red-500 inline-block" />
